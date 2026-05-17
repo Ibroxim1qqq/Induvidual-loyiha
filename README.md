@@ -61,6 +61,14 @@ Brauzerda odatda quyidagi manzil ochiladi:
 http://localhost:8501
 ```
 
+## Render orqali deploy qilish
+
+Loyiha root papkasida tayyor `render.yaml` bor. `Render` akkauntiga kirilgandan keyin quyidagi tugma orqali loyiha bir necha bosishda deploy qilinadi:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Ibroxim1qqq/Induvidual-loyiha)
+
+`Render` servis ishga tushgach, ilova avtomatik ravishda umumiy `onrender.com` havolasiga ega bo‘ladi.
+
 ## Qisqa metodologiya
 
 - Model uchun oxirgi 30 kunlik lag qiymatlar, 5/10/20/30 kunlik o‘rtacha qiymatlar, standart og‘ishlar, return, momentum, EMA va vaqt indeksi feature sifatida ishlatiladi.
