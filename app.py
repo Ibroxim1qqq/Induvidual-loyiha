@@ -906,25 +906,26 @@ def inject_custom_css() -> None:
             --muted: #475569;
             --card: #FFFFFF;
             --border: #DCE3EC;
-            --surface: #F7F9FC;
+            --surface: #F6F8FB;
+            --accent: #0F766E;
         }
         [data-testid="stAppViewContainer"] {
             background: var(--surface);
         }
         .block-container {
-            max-width: 1320px;
-            padding-top: 1.2rem;
+            max-width: 1280px;
+            padding-top: 1rem;
             padding-bottom: 2rem;
         }
         .page-header {
             display: flex;
-            align-items: flex-end;
+            align-items: center;
             justify-content: space-between;
             gap: 1rem;
-            margin-bottom: 0.9rem;
+            margin-bottom: 0.8rem;
         }
         .eyebrow {
-            color: #0F766E;
+            color: var(--accent);
             font-size: 0.78rem;
             font-weight: 700;
             text-transform: uppercase;
@@ -941,45 +942,90 @@ def inject_custom_css() -> None:
             font-size: 0.86rem;
             text-align: right;
         }
-        .kpi-card {
-            min-height: 88px;
-            padding: 0.9rem 1rem;
-            border-radius: 8px;
-            background: var(--card);
-            border: 1px solid var(--border);
-        }
-        .kpi-label {
-            color: var(--muted);
-            font-size: 0.82rem;
-            margin-bottom: 0.25rem;
-        }
-        .kpi-value {
-            color: var(--ink);
-            font-size: 1.35rem;
-            font-weight: 700;
-        }
-        .kpi-note {
-            color: #64748B;
-            font-size: 0.78rem;
-            margin-top: 0.18rem;
-        }
         .control-panel {
-            padding: 0.85rem 1rem 0.45rem;
+            padding: 0.8rem 1rem 0.35rem;
             border-radius: 8px;
             background: var(--card);
             border: 1px solid var(--border);
-            margin-bottom: 1.1rem;
+            margin-bottom: 1rem;
         }
         .section-title {
             color: var(--ink);
             font-size: 1.08rem;
             font-weight: 700;
-            margin: 1.2rem 0 0.2rem 0;
+            margin: 0.35rem 0 0.18rem 0;
         }
         .section-note {
             color: var(--muted);
             font-size: 0.88rem;
-            margin-bottom: 0.55rem;
+            margin-bottom: 0.45rem;
+        }
+        .summary-panel {
+            min-height: 100%;
+            padding: 1rem 1.05rem;
+            border-radius: 8px;
+            background: var(--card);
+            border: 1px solid var(--border);
+        }
+        .summary-kicker {
+            color: var(--muted);
+            font-size: 0.78rem;
+            margin-bottom: 0.2rem;
+        }
+        .summary-price {
+            color: var(--ink);
+            font-size: 1.9rem;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .summary-change {
+            color: #15803D;
+            font-size: 0.92rem;
+            font-weight: 600;
+            margin-top: 0.25rem;
+        }
+        .summary-change.down {
+            color: #B91C1C;
+        }
+        .summary-divider {
+            height: 1px;
+            background: var(--border);
+            margin: 0.9rem 0;
+        }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.8rem;
+        }
+        .summary-label {
+            color: var(--muted);
+            font-size: 0.76rem;
+            margin-bottom: 0.16rem;
+        }
+        .summary-value {
+            color: var(--ink);
+            font-size: 0.98rem;
+            font-weight: 600;
+            line-height: 1.35;
+        }
+        .signal-pill {
+            display: inline-block;
+            margin-top: 0.8rem;
+            padding: 0.24rem 0.55rem;
+            border-radius: 999px;
+            background: #E6F4F1;
+            color: #0F766E;
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+        .signal-pill.neutral {
+            background: #EEF2F7;
+            color: #475569;
+        }
+        .table-note {
+            color: var(--muted);
+            font-size: 0.82rem;
+            margin-top: 0.45rem;
         }
         @media (max-width: 900px) {
             .page-header {
@@ -988,6 +1034,20 @@ def inject_custom_css() -> None:
             .header-note {
                 margin-top: 0.35rem;
                 text-align: left;
+            }
+            .summary-grid {
+                grid-template-columns: 1fr;
+            }
+            [data-testid="stHorizontalBlock"] {
+                flex-direction: column;
+                gap: 0.8rem;
+            }
+            [data-testid="column"] {
+                width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+            .summary-panel {
+                min-width: 0;
             }
         }
         </style>
@@ -1012,14 +1072,57 @@ def render_page_header(ticker: str) -> None:
     )
 
 
-def render_kpi_card(label: str, value: str, note: str) -> None:
-    """Oddiy KPI kartasini chiqaradi."""
+def render_summary_panel(
+    latest_close: float,
+    daily_delta: float,
+    daily_delta_pct: float,
+    trailing_low: float,
+    trailing_high: float,
+    recent_volatility: float,
+    best_future_model_name: str,
+    best_future_skill: float,
+    forecast_months: int,
+    best_forecast_end: float,
+    forecast_delta: float,
+) -> None:
+    """Asosiy natijalarni bitta ixcham panelda ko'rsatadi."""
+    change_class = "down" if daily_delta < 0 else ""
+    forecast_note = (
+        "Benchmark yetakchi"
+        if best_future_model_name == BASELINE_NAME
+        else f"Benchmarkdan {best_future_skill:+.1f}%"
+    )
+    pill_class = "neutral" if best_future_model_name == BASELINE_NAME else ""
     st.markdown(
         f"""
-        <div class="kpi-card">
-            <div class="kpi-label">{label}</div>
-            <div class="kpi-value">{value}</div>
-            <div class="kpi-note">{note}</div>
+        <div class="summary-panel">
+            <div class="summary-kicker">Hozirgi narx</div>
+            <div class="summary-price">${latest_close:,.2f}</div>
+            <div class="summary-change {change_class}">
+                {daily_delta:+.2f} ({daily_delta_pct:+.2f}%)
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-grid">
+                <div>
+                    <div class="summary-label">52 haftalik oralig'</div>
+                    <div class="summary-value">${trailing_low:,.0f} - ${trailing_high:,.0f}</div>
+                </div>
+                <div>
+                    <div class="summary-label">3 oylik volatillik</div>
+                    <div class="summary-value">{recent_volatility:.1f}%</div>
+                </div>
+                <div>
+                    <div class="summary-label">Tanlangan prognoz</div>
+                    <div class="summary-value">{best_future_model_name}</div>
+                </div>
+                <div>
+                    <div class="summary-label">{forecast_months} oy yakuni</div>
+                    <div class="summary-value">${best_forecast_end:,.2f}</div>
+                </div>
+            </div>
+            <div class="signal-pill {pill_class}">
+                {forecast_note} · Yakuniy farq {forecast_delta:+.2f}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1109,42 +1212,6 @@ def main() -> None:
         data["Close"].pct_change().tail(63).std() * np.sqrt(252) * 100
     )
 
-    kpi_columns = st.columns(5)
-    with kpi_columns[0]:
-        render_kpi_card(
-            "Hozirgi narx",
-            f"${latest_close:,.2f}",
-            live_quote["source"],
-        )
-    with kpi_columns[1]:
-        render_kpi_card(
-            "Kunlik o'zgarish",
-            f"{daily_delta:+.2f}",
-            f"{daily_delta_pct:+.2f}%",
-        )
-    with kpi_columns[2]:
-        render_kpi_card(
-            "52 haftalik oralig'",
-            f"${trailing_low:,.0f} - ${trailing_high:,.0f}",
-            f"3 oylik volatillik: {recent_volatility:.1f}%",
-        )
-    with kpi_columns[3]:
-        render_kpi_card(
-            "Tanlangan prognoz",
-            best_future_model_name,
-            (
-                "Benchmark yetakchi"
-                if best_future_model_name == BASELINE_NAME
-                else f"Benchmarkdan {best_future_skill:+.1f}%"
-            ),
-        )
-    with kpi_columns[4]:
-        render_kpi_card(
-            f"{forecast_months} oy yakuni",
-            f"${best_forecast_end:,.2f}",
-            f"Oxirgi close'dan: {forecast_delta:+.2f}",
-        )
-
     if best_future_model_name == BASELINE_NAME:
         st.info(
             "Rolling backtest natijasida oddiy benchmark eng yaxshi chiqdi. "
@@ -1152,24 +1219,30 @@ def main() -> None:
             "eng ishonchli signal sifatida benchmark ko'rsatiladi."
         )
 
-    st.markdown('<div class="section-title">Bozor grafigi</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-note">Oxirgi 12 oy narxi, EMA 20 va EMA 50 bilan.</div>',
-        unsafe_allow_html=True,
-    )
-    st.plotly_chart(create_price_chart(data, ticker), width="stretch")
+    overview_left, overview_right = st.columns([1.62, 0.88], gap="large")
+    with overview_left:
+        st.markdown('<div class="section-title">Narx harakati</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-note">Oxirgi 12 oy narxi, EMA 20 va EMA 50 bilan.</div>',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(create_price_chart(data, ticker), width="stretch")
+    with overview_right:
+        render_summary_panel(
+            latest_close=latest_close,
+            daily_delta=daily_delta,
+            daily_delta_pct=daily_delta_pct,
+            trailing_low=trailing_low,
+            trailing_high=trailing_high,
+            recent_volatility=recent_volatility,
+            best_future_model_name=best_future_model_name,
+            best_future_skill=best_future_skill,
+            forecast_months=forecast_months,
+            best_forecast_end=best_forecast_end,
+            forecast_delta=forecast_delta,
+        )
 
-    st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-note">Benchmark va 4 ta model bir xil tarixiy featurelar asosida solishtiriladi.</div>',
-        unsafe_allow_html=True,
-    )
-    st.plotly_chart(
-        create_multi_model_forecast_chart(data, future_forecasts, best_future_model_name),
-        width="stretch",
-    )
-
-    st.markdown('<div class="section-title">Prognoz sifati</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Prognoz va sifat</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-note">Asosiy tanlov bir martalik split emas, rolling backtest oynalari o‘rtachasi bo‘yicha qilinadi.</div>',
         unsafe_allow_html=True,
@@ -1179,22 +1252,40 @@ def main() -> None:
             "Model",
             "RMSE",
             "MAPE",
-            "Wins",
-            "Benchmark Wins",
             "Skill vs Benchmark",
         ]
     ].copy()
     horizon_display.insert(0, "Rank", range(1, len(horizon_display) + 1))
     for column in ["RMSE", "MAPE", "Skill vs Benchmark"]:
         horizon_display[column] = horizon_display[column].map(lambda value: round(value, 4))
-    st.dataframe(horizon_display, width="stretch", hide_index=True)
-
-    st.download_button(
-        "Rolling backtest jadvalini CSV yuklab olish",
-        data=rolling_summary.to_csv(index=False).encode("utf-8"),
-        file_name=f"{ticker}_{forecast_months}oy_rolling_backtest.csv",
-        mime="text/csv",
-    )
+    analysis_left, analysis_right = st.columns([1.62, 0.88], gap="large")
+    with analysis_left:
+        st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-note">Benchmark va 4 ta model bir xil tarixiy featurelar asosida solishtiriladi.</div>',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(
+            create_multi_model_forecast_chart(data, future_forecasts, best_future_model_name),
+            width="stretch",
+        )
+    with analysis_right:
+        st.markdown('<div class="section-title">Model sifati</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-note">Rolling backtest bo‘yicha qisqa reyting.</div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(horizon_display, width="stretch", hide_index=True)
+        st.markdown(
+            '<div class="table-note">RMSE qancha kichik bo‘lsa, prognoz shuncha yaxshi.</div>',
+            unsafe_allow_html=True,
+        )
+        st.download_button(
+            "Rolling backtest CSV",
+            data=rolling_summary.to_csv(index=False).encode("utf-8"),
+            file_name=f"{ticker}_{forecast_months}oy_rolling_backtest.csv",
+            mime="text/csv",
+        )
 
     with st.expander("Qo‘shimcha tekshiruvlar"):
         st.markdown("#### Oxirgi 1 yillik kunlik holdout test")
@@ -1264,7 +1355,7 @@ def main() -> None:
         )
 
     st.download_button(
-        "Prognozlarni CSV yuklab olish",
+        "Prognozlar CSV",
         data=future_forecasts.reset_index(names="Date").to_csv(index=False).encode("utf-8"),
         file_name=f"{ticker}_{forecast_months}oy_forecast.csv",
         mime="text/csv",
