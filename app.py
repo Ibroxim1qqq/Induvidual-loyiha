@@ -5,6 +5,7 @@ import logging
 import os
 import warnings
 from contextlib import redirect_stderr, redirect_stdout
+from typing import Callable
 
 # Ba'zi Windows tizimlarida joblib fizik yadrolarni aniqlay olmaydi.
 # Shu sababli ogohlantirish chiqmasligi uchun qiymatni oldindan belgilab qo'yamiz.
@@ -15,35 +16,53 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-
-from model_pipeline import (
-    ALL_FORECAST_NAMES,
-    BASELINE_NAME,
-    BLEND_NAME,
-    DERIVED_FORECAST_NAMES,
-    ENSEMBLE_NAME,
-    FEATURE_COLUMNS,
-    MODEL_NAMES,
-    ROLLING_BACKTEST_ORIGINS,
-    add_derived_forecast_columns,
-    add_derived_metric_rows,
-    add_derived_prediction_series,
-    build_weekly_forecast_bundle,
-    evaluate_models,
-    evaluate_models_with_walk_forward,
-    evaluate_rolling_horizon_backtests,
-    get_horizon_weeks,
-    run_horizon_matched_backtest,
-    split_train_test,
-    summarize_rolling_horizon_backtests,
+from sklearn.ensemble import (
+    ExtraTreesRegressor,
+    GradientBoostingRegressor,
+    RandomForestRegressor,
 )
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
 
 # Ilovadagi asosiy sozlamalar
 DEFAULT_TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL"]
+MODEL_NAMES = [
+    "Ridge Regression",
+    "Random Forest Regressor",
+    "Gradient Boosting Regressor",
+    "Extra Trees Regressor",
+]
+BASELINE_NAME = "Naive Baseline"
+ENSEMBLE_NAME = "Mean Ensemble"
+BLEND_NAME = "Conservative Blend"
+DERIVED_FORECAST_NAMES = [ENSEMBLE_NAME, BLEND_NAME]
+ALL_FORECAST_NAMES = [BASELINE_NAME, *MODEL_NAMES, *DERIVED_FORECAST_NAMES]
 FIXED_HISTORY_YEARS = 5
 FIXED_FORECAST_MONTHS = 3
 DEMO_PERIODS_PER_YEAR = 252
+TEST_YEARS = 1
+LAG_DAYS = 30
+ROLLING_WINDOWS = (5, 10, 20, 30)
+RETURN_PERIODS = (1, 5, 10, 20)
+MOMENTUM_PERIODS = (5, 10, 20)
+EMA_SPANS = (5, 10, 20, 30)
+WEEKLY_RETURN_LAGS = 26
+WEEKLY_WINDOWS = (4, 8, 13, 26)
+ROLLING_BACKTEST_ORIGINS = 2
+FEATURE_COLUMNS = [
+    *[f"lag_{lag}" for lag in range(1, LAG_DAYS + 1)],
+    *[f"rolling_mean_{window}" for window in ROLLING_WINDOWS],
+    *[f"rolling_std_{window}" for window in ROLLING_WINDOWS],
+    *[f"return_{period}" for period in RETURN_PERIODS],
+    *[f"momentum_{period}" for period in MOMENTUM_PERIODS],
+    *[f"ema_{span}" for span in EMA_SPANS],
+    "day_index",
+]
 
 
 # Terminalni ortiqcha xabarlardan toza tutamiz.
@@ -162,7 +181,82 @@ def load_live_quote(ticker: str) -> dict[str, float | str | bool]:
         }
 
 
-def _legacy_calculate_metrics(actual: pd.Series, predicted: pd.Series) -> dict[str, float]:
+def split_train_test(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Tarixning oxirgi 1 yilini test, undan oldingisini train sifatida ajratadi."""
+    cutoff_date = data.index.max() - pd.DateOffset(years=TEST_YEARS)
+    train_data = data[data.index < cutoff_date].copy()
+    test_data = data[data.index >= cutoff_date].copy()
+
+    if len(train_data) <= LAG_DAYS + 30 or len(test_data) < 30:
+        split_index = int(len(data) * 0.9)
+        train_data = data.iloc[:split_index].copy()
+        test_data = data.iloc[split_index:].copy()
+
+    return train_data, test_data
+
+
+def build_feature_frame(data: pd.DataFrame) -> pd.DataFrame:
+    """ML/DL modellar uchun lag, trend va volatilitet feature'larini yaratadi."""
+    features = data.copy()
+
+    for lag in range(1, LAG_DAYS + 1):
+        features[f"lag_{lag}"] = features["Close"].shift(lag)
+
+    for window in ROLLING_WINDOWS:
+        features[f"rolling_mean_{window}"] = (
+            features["Close"].shift(1).rolling(window).mean()
+        )
+        features[f"rolling_std_{window}"] = (
+            features["Close"].shift(1).rolling(window).std()
+        )
+
+    for period in RETURN_PERIODS:
+        features[f"return_{period}"] = features["Close"].pct_change(period).shift(1)
+
+    for period in MOMENTUM_PERIODS:
+        features[f"momentum_{period}"] = (
+            features["Close"].shift(1) - features["Close"].shift(period + 1)
+        )
+
+    for span in EMA_SPANS:
+        features[f"ema_{span}"] = features["Close"].shift(1).ewm(
+            span=span,
+            adjust=False,
+        ).mean()
+
+    features["day_index"] = np.arange(len(features))
+    features["target_change"] = features["Close"].diff()
+    return features.dropna()
+
+
+def get_sklearn_model_builders() -> dict[str, Callable[[], object]]:
+    """Ilovadagi klassik ML modellarini yaratadi."""
+    return {
+        "Ridge Regression": lambda: Pipeline(
+            [("scaler", StandardScaler()), ("model", Ridge(alpha=2.0))]
+        ),
+        "Random Forest Regressor": lambda: RandomForestRegressor(
+            n_estimators=80,
+            min_samples_leaf=4,
+            random_state=42,
+            n_jobs=1,
+        ),
+        "Gradient Boosting Regressor": lambda: GradientBoostingRegressor(
+            n_estimators=90,
+            learning_rate=0.03,
+            max_depth=2,
+            random_state=42,
+        ),
+        "Extra Trees Regressor": lambda: ExtraTreesRegressor(
+            n_estimators=100,
+            min_samples_leaf=4,
+            random_state=42,
+            n_jobs=1,
+        ),
+    }
+
+
+def calculate_metrics(actual: pd.Series, predicted: pd.Series) -> dict[str, float]:
     """Model sifatini MAE, RMSE, MAPE va R² orqali hisoblaydi."""
     actual_values = actual.to_numpy(dtype=float)
     predicted_values = predicted.to_numpy(dtype=float)
@@ -178,7 +272,7 @@ def _legacy_calculate_metrics(actual: pd.Series, predicted: pd.Series) -> dict[s
     }
 
 
-def _legacy_evaluate_models(
+def evaluate_models(
     data: pd.DataFrame,
     train_data: pd.DataFrame,
     test_data: pd.DataFrame,
@@ -242,7 +336,7 @@ def _legacy_evaluate_models(
     return metrics_table.reset_index(drop=True), predictions, best_model_name
 
 
-def _legacy_evaluate_models_with_walk_forward(data: pd.DataFrame) -> pd.DataFrame:
+def evaluate_models_with_walk_forward(data: pd.DataFrame) -> pd.DataFrame:
     """Vaqt tartibini saqlagan holda 4 fold walk-forward natijalarini hisoblaydi."""
     feature_frame = build_feature_frame(data)
     x_all = feature_frame[FEATURE_COLUMNS]
@@ -320,7 +414,7 @@ def run_walk_forward_validation(data: pd.DataFrame) -> pd.DataFrame:
     return evaluate_models_with_walk_forward(data)
 
 
-def _legacy_build_weekly_frame(data: pd.DataFrame) -> pd.DataFrame:
+def build_weekly_frame(data: pd.DataFrame) -> pd.DataFrame:
     """Uzoq muddat forecast uchun haftalik close va return feature'larini yaratadi."""
     weekly = data["Close"].resample("W-FRI").last().dropna().to_frame("Close")
     weekly["return_1w"] = weekly["Close"].pct_change()
@@ -343,7 +437,7 @@ def _legacy_build_weekly_frame(data: pd.DataFrame) -> pd.DataFrame:
     return weekly.dropna()
 
 
-def _legacy_get_weekly_feature_columns() -> list[str]:
+def get_weekly_feature_columns() -> list[str]:
     """Haftalik forecast modelida ishlatiladigan feature nomlari."""
     return [
         *[f"return_lag_{lag}" for lag in range(1, WEEKLY_RETURN_LAGS + 1)],
@@ -354,7 +448,7 @@ def _legacy_get_weekly_feature_columns() -> list[str]:
     ]
 
 
-def _legacy_build_weekly_target_matrix(
+def build_weekly_target_matrix(
     weekly_frame: pd.DataFrame,
     horizon_weeks: int,
 ) -> pd.DataFrame:
@@ -366,7 +460,7 @@ def _legacy_build_weekly_target_matrix(
     return pd.DataFrame(targets, index=weekly_frame.index)
 
 
-def _legacy_build_weekly_sklearn_model(model_name: str) -> object:
+def build_weekly_sklearn_model(model_name: str) -> object:
     """Haftalik multi-output forecast uchun klassik ML modelini yaratadi."""
     if model_name == "Ridge Regression":
         return Pipeline(
@@ -398,7 +492,7 @@ def _legacy_build_weekly_sklearn_model(model_name: str) -> object:
     raise KeyError(model_name)
 
 
-def _legacy_returns_to_price_path(
+def returns_to_price_path(
     start_price: float,
     predicted_returns: np.ndarray,
 ) -> np.ndarray:
@@ -407,7 +501,7 @@ def _legacy_returns_to_price_path(
     return start_price * np.cumprod(1 + clipped_returns)
 
 
-def _legacy_forecast_weekly_sklearn(
+def forecast_weekly_sklearn(
     data: pd.DataFrame,
     model_name: str,
     horizon_weeks: int,
@@ -433,12 +527,12 @@ def _legacy_forecast_weekly_sklearn(
     return pd.Series(predicted_prices, index=future_dates)
 
 
-def _legacy_get_horizon_weeks(forecast_months: int) -> int:
+def get_horizon_weeks(forecast_months: int) -> int:
     """Oy sonini taxminiy trading haftalariga aylantiradi."""
     return {3: 13, 6: 26, 12: 52}[forecast_months]
 
 
-def _legacy_forecast_weekly_baseline(data: pd.DataFrame, horizon_weeks: int) -> pd.Series:
+def forecast_weekly_baseline(data: pd.DataFrame, horizon_weeks: int) -> pd.Series:
     """Kelajak uchun flat-price benchmark prognozini yaratadi."""
     weekly_close = data["Close"].resample("W-FRI").last().dropna()
     future_dates = pd.date_range(
@@ -449,7 +543,7 @@ def _legacy_forecast_weekly_baseline(data: pd.DataFrame, horizon_weeks: int) -> 
     return pd.Series(float(weekly_close.iloc[-1]), index=future_dates)
 
 
-def _legacy_build_weekly_forecast_bundle(
+def build_weekly_forecast_bundle(
     data: pd.DataFrame,
     horizon_weeks: int,
 ) -> pd.DataFrame:
@@ -464,7 +558,7 @@ def _legacy_build_weekly_forecast_bundle(
     return add_derived_forecast_columns(pd.DataFrame(forecasts))
 
 
-def _legacy_add_derived_forecast_columns(forecast_frame: pd.DataFrame) -> pd.DataFrame:
+def add_derived_forecast_columns(forecast_frame: pd.DataFrame) -> pd.DataFrame:
     """Eski cache natijalariga ham ansambl ustunlarini qo'shadi."""
     updated_frame = forecast_frame.copy()
     if ENSEMBLE_NAME not in updated_frame:
@@ -476,7 +570,7 @@ def _legacy_add_derived_forecast_columns(forecast_frame: pd.DataFrame) -> pd.Dat
     return updated_frame
 
 
-def _legacy_add_derived_prediction_series(
+def add_derived_prediction_series(
     predictions: dict[str, pd.Series],
 ) -> dict[str, pd.Series]:
     """Eski cache natijalariga ham kunlik ansambl seriyalarini qo'shadi."""
@@ -493,7 +587,7 @@ def _legacy_add_derived_prediction_series(
     return updated_predictions
 
 
-def _legacy_add_derived_metric_rows(
+def add_derived_metric_rows(
     metrics_table: pd.DataFrame,
     actual_close: pd.Series,
     predictions: dict[str, pd.Series],
@@ -532,7 +626,7 @@ def run_all_future_forecasts(
     return build_weekly_forecast_bundle(data, horizon_weeks)
 
 
-def _legacy_run_horizon_matched_backtest(
+def run_horizon_matched_backtest(
     data: pd.DataFrame,
     forecast_months: int,
 ) -> tuple[pd.Series, pd.DataFrame]:
@@ -555,7 +649,7 @@ def run_cached_horizon_backtest(
     return run_horizon_matched_backtest(data, forecast_months)
 
 
-def _legacy_evaluate_rolling_horizon_backtests(
+def evaluate_rolling_horizon_backtests(
     data: pd.DataFrame,
     forecast_months: int,
     origins: int = ROLLING_BACKTEST_ORIGINS,
@@ -596,7 +690,7 @@ def _legacy_evaluate_rolling_horizon_backtests(
     return pd.DataFrame(rows)
 
 
-def _legacy_summarize_rolling_horizon_backtests(details: pd.DataFrame) -> pd.DataFrame:
+def summarize_rolling_horizon_backtests(details: pd.DataFrame) -> pd.DataFrame:
     """Rolling horizon testlarini model darajasida jamlaydi."""
     baseline_rmse = float(
         details.loc[details["Model"] == BASELINE_NAME, "RMSE"].mean()
@@ -1830,7 +1924,7 @@ def main() -> None:
             "Eng yaxshi" if model_name == format_model_label(best_model_name) else ""
         )
     )
-    for column in ["MAE", "RMSE", "MAPE", "R2 Score"]:
+    for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
         display_table[column] = display_table[column].map(lambda value: round(value, 4))
 
     render_stock_header(

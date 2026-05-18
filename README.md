@@ -1,14 +1,14 @@
 # Aksiya narxlarini prognoz qilish paneli
 
 Ushbu loyiha `Python` va `Streamlit` yordamida yaratilgan web ilova bo'lib,
-aksiya narxlarini 5 yillik tarix asosida tahlil qiladi va 3 oylik prognozlarni
-benchmark bilan solishtiradi.
+aksiya narxlarini tanlangan tarix chuqurligi asosida tahlil qiladi va uzoq
+muddatli prognozlarni benchmark bilan solishtiradi.
 
 ## Asosiy imkoniyatlar
 
 - Tayyor tickerlar: `AAPL`, `MSFT`, `NVDA`, `TSLA`, `AMZN`, `GOOGL`
 - Foydalanuvchi boshqa ticker ham kiritishi mumkin
-- Standart tarix chuqurligi: `5 yil`
+- `2`, `5` yoki `10` yillik tarix tanlanadi; standart rejim `5 yil`
 - 4 ta o'rganadigan model ishlatiladi:
   - `Ridge Regression`
   - `Random Forest Regressor`
@@ -24,13 +24,16 @@ benchmark bilan solishtiradi.
   - `RMSE`
   - `MAPE`
   - `R2 Score`
-- Standart prognoz ufqi: `3 oy`
-- Asosiy panel:
+- 3, 6 yoki 12 oylik prognoz
+- Professional panel:
   - joriy narx
-  - to'liq tarixiy chart
+  - kunlik o'zgarish
+  - 52 haftalik diapazon
+  - asosiy candlestick chart
   - benchmark va modellar taqqoslangan forecast chart
-  - model test natijalari jadvali
-  - train/test davri grafigi
+  - rolling backtest reytingi
+  - ishonchlilik va risk paneli
+- Test natijalari va prognozlarni `CSV` formatida yuklab olish mumkin
 - Internet bo'lmasa, ilova sintetik demo data bilan ishlashda davom etadi
 
 ## Fayllar tuzilmasi
@@ -38,9 +41,6 @@ benchmark bilan solishtiradi.
 ```text
 .
 |-- app.py
-|-- model_pipeline.py
-|-- notebooks/
-|   `-- stock_forecast_colab.ipynb
 |-- requirements.txt
 |-- README.md
 `-- run_app.bat
@@ -75,22 +75,14 @@ http://localhost:8501
 - Kunlik testda model keyingi kunlik narx o'zgarishini bashorat qiladi.
 - Uzoq muddatli prognoz uchun haftalik returnlar bo'yicha direct multi-output
   yondashuv ishlatiladi.
-- Joriy ilovada 3 oylik prognoz 13 haftalik ufqda baholanadi.
+- 3, 6 va 12 oylik prognozlar mos ravishda 13, 26 va 52 haftalik ufqda
+  baholanadi.
 - Tanlangan prognoz modeli bitta split bo'yicha emas, bir nechta rolling
   backtest oynalari bo'yicha aniqlanadi.
 - `Mean Ensemble` mavjud 4 model prognozlarining o'rtachasi, `Conservative Blend`
   esa shu ansambl bilan benchmarkning ehtiyotkor aralashmasidir.
 - Agar murakkab model `Naive Baseline`dan yaxshiroq chiqmasa, ilova buni yashirmaydi
   va benchmarkni eng ishonchli natija sifatida ko'rsatadi.
-
-## Google Colab bilan ishlash
-
-- Model logikasi endi alohida `model_pipeline.py` faylida saqlanadi.
-- Streamlit ilova ham, Colab notebook ham ayni pipeline'dan foydalanadi.
-- Tayyor notebook:
-  `notebooks/stock_forecast_colab.ipynb`
-- Colabda yangi model, feature yoki parametrni sinab ko'rib, yaxshi natija chiqsa
-  o'sha o'zgarishni `model_pipeline.py`ga qo'shib GitHubga push qilish kifoya.
 
 ## Eslatma
 
