@@ -1133,6 +1133,72 @@ def inject_custom_css() -> None:
             font-size: 0.84rem;
             line-height: 1.45;
         }
+        .confidence-panel {
+            padding: 1rem 1.05rem;
+            border-radius: 8px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            margin: 0.15rem 0 1.05rem;
+        }
+        .confidence-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.8rem;
+            margin-bottom: 0.85rem;
+        }
+        .confidence-kicker {
+            color: var(--muted);
+            font-size: 0.78rem;
+            margin-bottom: 0.16rem;
+        }
+        .confidence-title {
+            color: var(--ink);
+            font-size: 1.08rem;
+            font-weight: 700;
+        }
+        .confidence-badge {
+            display: inline-block;
+            padding: 0.22rem 0.52rem;
+            border-radius: 999px;
+            background: #FEF3C7;
+            color: #B45309;
+            font-size: 0.76rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .confidence-badge.good {
+            background: #DCFCE7;
+            color: #15803D;
+        }
+        .confidence-badge.weak {
+            background: #FEE2E2;
+            color: #B91C1C;
+        }
+        .confidence-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.8rem;
+        }
+        .confidence-item {
+            padding-top: 0.72rem;
+            border-top: 1px solid var(--border);
+        }
+        .confidence-label {
+            color: var(--muted);
+            font-size: 0.76rem;
+            margin-bottom: 0.16rem;
+        }
+        .confidence-value {
+            color: var(--ink);
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+        .confidence-note {
+            color: var(--muted);
+            font-size: 0.78rem;
+            margin-top: 0.18rem;
+        }
         div[data-testid="stDataFrame"] {
             font-size: 0.85rem;
         }
@@ -1168,6 +1234,15 @@ def inject_custom_css() -> None:
                 grid-template-columns: 1fr;
             }
             .workflow-strip {
+                grid-template-columns: 1fr;
+            }
+            .confidence-header {
+                display: block;
+            }
+            .confidence-badge {
+                margin-top: 0.45rem;
+            }
+            .confidence-grid {
                 grid-template-columns: 1fr;
             }
         }
@@ -1326,6 +1401,80 @@ def render_workflow_strip(
     )
 
 
+def render_confidence_panel(
+    best_future_skill: float,
+    best_future_benchmark_wins: int,
+    best_future_wins: int,
+    forecast_spread_pct: float,
+    forecast_up_count: int,
+    total_models: int,
+    recent_volatility: float,
+) -> None:
+    """Forecast natijasini o'qishga yordam beradigan ishonchlilik paneli."""
+    agreement_ratio = forecast_up_count / total_models if total_models else 0.0
+    score = 0
+    if best_future_skill > 0:
+        score += 1
+    if best_future_benchmark_wins >= max(1, ROLLING_BACKTEST_ORIGINS // 2):
+        score += 1
+    if forecast_spread_pct <= 5:
+        score += 1
+    if agreement_ratio >= 0.75:
+        score += 1
+    if recent_volatility < 35:
+        score += 1
+
+    if score >= 4:
+        confidence_label = "Yaxshi"
+        confidence_class = "good"
+    elif score >= 2:
+        confidence_label = "Ehtiyotkor"
+        confidence_class = ""
+    else:
+        confidence_label = "Zaif"
+        confidence_class = "weak"
+
+    benchmark_note = (
+        f"{best_future_benchmark_wins}/{ROLLING_BACKTEST_ORIGINS} oynada benchmarkdan yaxshi"
+    )
+    st.markdown(
+        f"""
+        <div class="confidence-panel">
+            <div class="confidence-header">
+                <div>
+                    <div class="confidence-kicker">Prognozni o'qish</div>
+                    <div class="confidence-title">Ishonchlilik va risk</div>
+                </div>
+                <div class="confidence-badge {confidence_class}">{confidence_label}</div>
+            </div>
+            <div class="confidence-grid">
+                <div class="confidence-item">
+                    <div class="confidence-label">Benchmarkdan ustunlik</div>
+                    <div class="confidence-value">{best_future_skill:+.1f}%</div>
+                    <div class="confidence-note">{benchmark_note}</div>
+                </div>
+                <div class="confidence-item">
+                    <div class="confidence-label">G'olib oynalar</div>
+                    <div class="confidence-value">{best_future_wins}/{ROLLING_BACKTEST_ORIGINS}</div>
+                    <div class="confidence-note">Rolling backtest bo'yicha</div>
+                </div>
+                <div class="confidence-item">
+                    <div class="confidence-label">Model tarqoqligi</div>
+                    <div class="confidence-value">{forecast_spread_pct:.1f}%</div>
+                    <div class="confidence-note">Past bo'lsa, prognozlar yaqinroq</div>
+                </div>
+                <div class="confidence-item">
+                    <div class="confidence-label">Yo'nalish kelishuvi</div>
+                    <div class="confidence-value">{forecast_up_count}/{total_models}</div>
+                    <div class="confidence-note">Modellar yuqoriga deydi</div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def format_model_label(model_name: str) -> str:
     """UI jadvalida model nomlarini ixchamroq ko'rsatadi."""
     return {
@@ -1406,6 +1555,8 @@ def main() -> None:
     daily_delta_pct = (daily_delta / previous_close) * 100
     best_future_model_name = str(rolling_summary.iloc[0]["Model"])
     best_future_skill = float(rolling_summary.iloc[0]["Skill vs Benchmark"])
+    best_future_benchmark_wins = int(rolling_summary.iloc[0]["Benchmark Wins"])
+    best_future_wins = int(rolling_summary.iloc[0]["Wins"])
     best_forecast_end = float(future_forecasts[best_future_model_name].iloc[-1])
     forecast_anchor = float(data["Close"].iloc[-1])
     forecast_delta = best_forecast_end - forecast_anchor
@@ -1481,6 +1632,15 @@ def main() -> None:
         forecast_range_high=forecast_range_high,
         forecast_spread_pct=forecast_spread_pct,
     )
+    render_confidence_panel(
+        best_future_skill=best_future_skill,
+        best_future_benchmark_wins=best_future_benchmark_wins,
+        best_future_wins=best_future_wins,
+        forecast_spread_pct=forecast_spread_pct,
+        forecast_up_count=forecast_up_count,
+        total_models=len(MODEL_NAMES),
+        recent_volatility=recent_volatility,
+    )
     st.markdown('<div class="section-title">Model oqimi</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-note">Qaysi data bilan o‘qitildi, qayerda test qilindi va tanlov qanday qilindi.</div>',
@@ -1545,10 +1705,18 @@ def main() -> None:
             "RMSE",
             "MAPE",
             "Skill vs Benchmark",
+            "Benchmark Wins",
+            "Wins",
         ]
     ].copy()
     horizon_display["Model"] = horizon_display["Model"].map(format_model_label)
     horizon_display.insert(0, "Rank", range(1, len(horizon_display) + 1))
+    horizon_display = horizon_display.rename(
+        columns={
+            "Benchmark Wins": "Benchmarkdan yaxshi",
+            "Wins": "G'olib oynalar",
+        }
+    )
     for column in ["RMSE", "MAPE", "Skill vs Benchmark"]:
         horizon_display[column] = horizon_display[column].map(lambda value: round(value, 4))
     analysis_left, analysis_right = st.columns([1.62, 0.88], gap="large")
