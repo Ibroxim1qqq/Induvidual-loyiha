@@ -1855,12 +1855,6 @@ def main() -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.download_button(
-            "Holdout test CSV",
-            data=display_table.to_csv(index=False).encode("utf-8"),
-            file_name=f"{ticker}_holdout_test.csv",
-            mime="text/csv",
-        )
 
     st.markdown('<div class="section-title">Prognoz va sifat</div>', unsafe_allow_html=True)
     st.markdown(
@@ -1909,14 +1903,7 @@ def main() -> None:
             '<div class="table-note">RMSE qancha kichik bo‘lsa, prognoz shuncha yaxshi.</div>',
             unsafe_allow_html=True,
         )
-        st.download_button(
-            "Rolling backtest CSV",
-            data=rolling_summary.to_csv(index=False).encode("utf-8"),
-            file_name=f"{ticker}_{forecast_months}oy_rolling_backtest.csv",
-            mime="text/csv",
-        )
-
-    with st.expander("Qo‘shimcha diagnostika"):
+    with st.expander("Qo‘shimcha diagnostika", expanded=True):
         with st.spinner("Qo'shimcha tekshiruvlar hisoblanmoqda..."):
             horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
                 data,
@@ -1977,14 +1964,6 @@ def main() -> None:
                     lambda value: round(value, 4)
                 )
             st.dataframe(walk_forward_display, width="stretch", hide_index=True)
-
-    st.download_button(
-        "Prognozlar CSV",
-        data=future_forecasts.reset_index(names="Date").to_csv(index=False).encode("utf-8"),
-        file_name=f"{ticker}_{forecast_months}oy_forecast.csv",
-        mime="text/csv",
-    )
-
 
 if __name__ == "__main__":
     main()
