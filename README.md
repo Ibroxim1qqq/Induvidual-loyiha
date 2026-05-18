@@ -14,6 +14,9 @@ muddatli prognozlarni benchmark bilan solishtiradi.
   - `Random Forest Regressor`
   - `Gradient Boosting Regressor`
   - `Extra Trees Regressor`
+- Qo'shimcha ravishda 2 ta yengil ansambl ishlatiladi:
+  - `Mean Ensemble`
+  - `Conservative Blend`
 - Har bir model majburiy ravishda `Naive Baseline` bilan solishtiriladi
 - Kunlik holdout test va uzoq muddat uchun rolling backtest mavjud
 - Asosiy metrikalar:
@@ -29,6 +32,7 @@ muddatli prognozlarni benchmark bilan solishtiradi.
   - asosiy candlestick chart
   - benchmark va modellar taqqoslangan forecast chart
   - rolling backtest reytingi
+  - ishonchlilik va risk paneli
 - Test natijalari va prognozlarni `CSV` formatida yuklab olish mumkin
 - Internet bo'lmasa, ilova sintetik demo data bilan ishlashda davom etadi
 
@@ -75,6 +79,8 @@ http://localhost:8501
   baholanadi.
 - Tanlangan prognoz modeli bitta split bo'yicha emas, bir nechta rolling
   backtest oynalari bo'yicha aniqlanadi.
+- `Mean Ensemble` mavjud 4 model prognozlarining o'rtachasi, `Conservative Blend`
+  esa shu ansambl bilan benchmarkning ehtiyotkor aralashmasidir.
 - Agar murakkab model `Naive Baseline`dan yaxshiroq chiqmasa, ilova buni yashirmaydi
   va benchmarkni eng ishonchli natija sifatida ko'rsatadi.
 

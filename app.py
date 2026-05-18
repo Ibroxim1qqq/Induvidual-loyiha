@@ -38,7 +38,10 @@ MODEL_NAMES = [
     "Extra Trees Regressor",
 ]
 BASELINE_NAME = "Naive Baseline"
-ALL_FORECAST_NAMES = [BASELINE_NAME, *MODEL_NAMES]
+ENSEMBLE_NAME = "Mean Ensemble"
+BLEND_NAME = "Conservative Blend"
+DERIVED_FORECAST_NAMES = [ENSEMBLE_NAME, BLEND_NAME]
+ALL_FORECAST_NAMES = [BASELINE_NAME, *MODEL_NAMES, *DERIVED_FORECAST_NAMES]
 HISTORY_YEARS = (2, 5, 10)
 DEFAULT_HISTORY_YEARS = 5
 DEMO_PERIODS_PER_YEAR = 252
@@ -306,6 +309,25 @@ def evaluate_models(
             {"Model": model_name, **calculate_metrics(actual_close, predicted_close)}
         )
 
+    model_prediction_frame = pd.concat(
+        [predictions[model_name] for model_name in MODEL_NAMES],
+        axis=1,
+    )
+    predictions[ENSEMBLE_NAME] = model_prediction_frame.mean(axis=1)
+    predictions[BLEND_NAME] = (predictions[ENSEMBLE_NAME] + previous_close) / 2
+    metrics_rows.extend(
+        [
+            {
+                "Model": ENSEMBLE_NAME,
+                **calculate_metrics(actual_close, predictions[ENSEMBLE_NAME]),
+            },
+            {
+                "Model": BLEND_NAME,
+                **calculate_metrics(actual_close, predictions[BLEND_NAME]),
+            },
+        ]
+    )
+
     metrics_table = pd.DataFrame(metrics_rows).sort_values(
         by=["RMSE", "MAE"],
         ascending=True,
@@ -533,7 +555,65 @@ def build_weekly_forecast_bundle(
             for model_name in MODEL_NAMES
         },
     }
-    return pd.DataFrame(forecasts)
+    return add_derived_forecast_columns(pd.DataFrame(forecasts))
+
+
+def add_derived_forecast_columns(forecast_frame: pd.DataFrame) -> pd.DataFrame:
+    """Eski cache natijalariga ham ansambl ustunlarini qo'shadi."""
+    updated_frame = forecast_frame.copy()
+    if ENSEMBLE_NAME not in updated_frame:
+        updated_frame[ENSEMBLE_NAME] = updated_frame[MODEL_NAMES].mean(axis=1)
+    if BLEND_NAME not in updated_frame:
+        updated_frame[BLEND_NAME] = (
+            updated_frame[ENSEMBLE_NAME] + updated_frame[BASELINE_NAME]
+        ) / 2
+    return updated_frame
+
+
+def add_derived_prediction_series(
+    predictions: dict[str, pd.Series],
+) -> dict[str, pd.Series]:
+    """Eski cache natijalariga ham kunlik ansambl seriyalarini qo'shadi."""
+    updated_predictions = predictions.copy()
+    if ENSEMBLE_NAME not in updated_predictions:
+        updated_predictions[ENSEMBLE_NAME] = pd.concat(
+            [updated_predictions[model_name] for model_name in MODEL_NAMES],
+            axis=1,
+        ).mean(axis=1)
+    if BLEND_NAME not in updated_predictions:
+        updated_predictions[BLEND_NAME] = (
+            updated_predictions[ENSEMBLE_NAME] + updated_predictions[BASELINE_NAME]
+        ) / 2
+    return updated_predictions
+
+
+def add_derived_metric_rows(
+    metrics_table: pd.DataFrame,
+    actual_close: pd.Series,
+    predictions: dict[str, pd.Series],
+) -> tuple[pd.DataFrame, str]:
+    """Eski cache natijalarida ansambl metrikalarini tiklaydi."""
+    updated_table = metrics_table.copy()
+    existing_models = set(updated_table["Model"])
+    missing_models = [
+        model_name
+        for model_name in DERIVED_FORECAST_NAMES
+        if model_name not in existing_models
+    ]
+    if missing_models:
+        extra_rows = [
+            {
+                "Model": model_name,
+                **calculate_metrics(actual_close, predictions[model_name]),
+            }
+            for model_name in missing_models
+        ]
+        updated_table = pd.concat(
+            [updated_table, pd.DataFrame(extra_rows)],
+            ignore_index=True,
+        )
+    updated_table = updated_table.sort_values(["RMSE", "MAE"]).reset_index(drop=True)
+    return updated_table, str(updated_table.iloc[0]["Model"])
 
 
 @st.cache_data(show_spinner=False)
@@ -772,13 +852,15 @@ def create_backtest_chart(
     predictions: dict[str, pd.Series],
     best_model_name: str,
 ) -> go.Figure:
-    """Oxirgi 1 yillik test davrida benchmark va modellarni ko'rsatadi."""
+    """Oxirgi 1 yillik testda benchmark, modellar va ansambllarni ko'rsatadi."""
     colors = {
         BASELINE_NAME: "#64748B",
         "Ridge Regression": "#0F766E",
         "Random Forest Regressor": "#2563EB",
         "Gradient Boosting Regressor": "#F97316",
         "Extra Trees Regressor": "#7C3AED",
+        ENSEMBLE_NAME: "#DB2777",
+        BLEND_NAME: "#0891B2",
     }
     figure = go.Figure()
     figure.add_trace(
@@ -798,7 +880,7 @@ def create_backtest_chart(
                 x=predictions[model_name].index,
                 y=predictions[model_name],
                 mode="lines",
-                name=f"{model_name}{' ★' if is_best else ''}",
+                name=f"{format_model_label(model_name)}{' ★' if is_best else ''}",
                 line=dict(
                     color=colors[model_name],
                     width=3.0 if is_best else 2.2 if is_baseline else 1.7,
@@ -827,6 +909,8 @@ def create_horizon_backtest_chart(
         "Random Forest Regressor": "#2563EB",
         "Gradient Boosting Regressor": "#F97316",
         "Extra Trees Regressor": "#7C3AED",
+        ENSEMBLE_NAME: "#DB2777",
+        BLEND_NAME: "#0891B2",
     }
     figure = go.Figure()
     figure.add_trace(
@@ -844,7 +928,7 @@ def create_horizon_backtest_chart(
                 x=forecasts.index,
                 y=forecasts[model_name],
                 mode="lines",
-                name=model_name,
+                name=format_model_label(model_name),
                 line=dict(
                     color=colors[model_name],
                     width=2.3 if model_name == BASELINE_NAME else 2.1,
@@ -863,7 +947,7 @@ def create_multi_model_forecast_chart(
     future_forecasts: pd.DataFrame,
     best_model_name: str,
 ) -> go.Figure:
-    """Benchmark va 4 ta modelning kelajak prognozini bitta chartda ko'rsatadi."""
+    """Benchmark, modellar va ansambllarning kelajak prognozini ko'rsatadi."""
     recent_history = data.tail(180)
     colors = {
         BASELINE_NAME: "#64748B",
@@ -871,6 +955,8 @@ def create_multi_model_forecast_chart(
         "Random Forest Regressor": "#2563EB",
         "Gradient Boosting Regressor": "#F97316",
         "Extra Trees Regressor": "#7C3AED",
+        ENSEMBLE_NAME: "#DB2777",
+        BLEND_NAME: "#0891B2",
     }
     figure = go.Figure()
     figure.add_trace(
@@ -916,7 +1002,7 @@ def create_multi_model_forecast_chart(
                 x=future_forecasts.index,
                 y=future_forecasts[model_name],
                 mode="lines",
-                name=f"{model_name}{' ★' if is_best else ''}",
+                name=f"{format_model_label(model_name)}{' ★' if is_best else ''}",
                 line=dict(
                     color=colors[model_name],
                     width=3.2 if is_best else 2.2 if is_baseline else 1.7,
@@ -1393,8 +1479,8 @@ def render_workflow_strip(
             </div>
             <div class="workflow-card">
                 <div class="workflow-step">4. Tanlov</div>
-                <div class="workflow-value">{ROLLING_BACKTEST_ORIGINS} oynali backtest</div>
-                <div class="workflow-note">Benchmark bilan tekshiriladi</div>
+                <div class="workflow-value">4 model + 2 ansambl</div>
+                <div class="workflow-note">{ROLLING_BACKTEST_ORIGINS} oynali rolling test</div>
             </div>
         </div>
         """,
@@ -1484,6 +1570,8 @@ def format_model_label(model_name: str) -> str:
         "Random Forest Regressor": "Random Forest",
         "Gradient Boosting Regressor": "Gradient Boosting",
         "Extra Trees Regressor": "Extra Trees",
+        ENSEMBLE_NAME: "Model Ensemble",
+        BLEND_NAME: "Conservative Blend",
     }.get(model_name, model_name)
 
 
@@ -1542,11 +1630,22 @@ def main() -> None:
         train_data, test_data, metrics_table, predictions, best_model_name = (
             run_model_evaluation(data)
         )
-        future_forecasts = run_all_future_forecasts(data, forecast_months)
+        predictions = add_derived_prediction_series(predictions)
+        metrics_table, best_model_name = add_derived_metric_rows(
+            metrics_table=metrics_table,
+            actual_close=test_data.loc[predictions[BASELINE_NAME].index, "Close"],
+            predictions=predictions,
+        )
+        future_forecasts = add_derived_forecast_columns(
+            run_all_future_forecasts(data, forecast_months)
+        )
         rolling_summary, _rolling_details = run_cached_rolling_horizon_backtests(
             data,
             forecast_months,
         )
+        if not set(DERIVED_FORECAST_NAMES).issubset(set(rolling_summary["Model"])):
+            rolling_details = evaluate_rolling_horizon_backtests(data, forecast_months)
+            rolling_summary = summarize_rolling_horizon_backtests(rolling_details)
 
     render_page_header(ticker, history_years)
 
@@ -1669,7 +1768,7 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         st.markdown(
-            '<div class="section-note">Oxirgi 1 yillik holdout test: haqiqiy narx, benchmark va barcha model chiziqlari bitta grafikda.</div>',
+            '<div class="section-note">Oxirgi 1 yillik holdout test: benchmark, 4 model va 2 ansambl bitta grafikda.</div>',
             unsafe_allow_html=True,
         )
         st.plotly_chart(
@@ -1737,7 +1836,7 @@ def main() -> None:
     with analysis_left:
         st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="section-note">Benchmark va 4 ta model bir xil tarixiy featurelar asosida solishtiriladi.</div>',
+            '<div class="section-note">Benchmark, 4 ta model va 2 ta ansambl bir xil tarixiy featurelar asosida solishtiriladi.</div>',
             unsafe_allow_html=True,
         )
         st.plotly_chart(
@@ -1768,6 +1867,7 @@ def main() -> None:
                 data,
                 forecast_months,
             )
+            horizon_forecasts = add_derived_forecast_columns(horizon_forecasts)
         st.markdown("#### Train/test kesimi")
         left_column, right_column = st.columns(2)
         with left_column:
