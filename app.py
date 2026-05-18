@@ -1029,6 +1029,34 @@ def inject_custom_css() -> None:
             font-size: 0.82rem;
             margin-top: 0.45rem;
         }
+        .signal-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.8rem;
+            margin: 0.9rem 0 1.1rem;
+        }
+        .signal-card {
+            padding: 0.8rem 0.9rem;
+            border-radius: 8px;
+            background: var(--card);
+            border: 1px solid var(--border);
+        }
+        .signal-card-label {
+            color: var(--muted);
+            font-size: 0.76rem;
+            margin-bottom: 0.16rem;
+        }
+        .signal-card-value {
+            color: var(--ink);
+            font-size: 1rem;
+            font-weight: 700;
+            line-height: 1.3;
+        }
+        .signal-card-note {
+            color: var(--muted);
+            font-size: 0.78rem;
+            margin-top: 0.18rem;
+        }
         div[data-testid="stDataFrame"] {
             font-size: 0.85rem;
         }
@@ -1059,6 +1087,9 @@ def inject_custom_css() -> None:
             }
             .summary-panel {
                 min-width: 0;
+            }
+            .signal-strip {
+                grid-template-columns: 1fr;
             }
         }
         </style>
@@ -1140,6 +1171,48 @@ def render_summary_panel(
     )
 
 
+def render_signal_strip(
+    trailing_year_return: float,
+    ema_20: float,
+    ema_50: float,
+    forecast_up_count: int,
+    total_models: int,
+    forecast_range_low: float,
+    forecast_range_high: float,
+    forecast_spread_pct: float,
+) -> None:
+    """Bozor va forecast bo'yicha ixcham yordamchi signallarni ko'rsatadi."""
+    trend_label = "Yuqoriga" if ema_20 >= ema_50 else "Pastga"
+    trend_note = f"EMA20 ${ema_20:,.2f} / EMA50 ${ema_50:,.2f}"
+    st.markdown(
+        f"""
+        <div class="signal-strip">
+            <div class="signal-card">
+                <div class="signal-card-label">1 yillik o'sish</div>
+                <div class="signal-card-value">{trailing_year_return:+.1f}%</div>
+                <div class="signal-card-note">Oxirgi 252 savdo kuni</div>
+            </div>
+            <div class="signal-card">
+                <div class="signal-card-label">Trend</div>
+                <div class="signal-card-value">{trend_label}</div>
+                <div class="signal-card-note">{trend_note}</div>
+            </div>
+            <div class="signal-card">
+                <div class="signal-card-label">Model kelishuvi</div>
+                <div class="signal-card-value">{forecast_up_count}/{total_models} yuqoriga</div>
+                <div class="signal-card-note">Kelajak yakuniy nuqtasi bo'yicha</div>
+            </div>
+            <div class="signal-card">
+                <div class="signal-card-label">Prognoz oralig'i</div>
+                <div class="signal-card-value">${forecast_range_low:,.2f} - ${forecast_range_high:,.2f}</div>
+                <div class="signal-card-note">Tarqoqlik {forecast_spread_pct:.1f}%</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def format_model_label(model_name: str) -> str:
     """UI jadvalida model nomlarini ixchamroq ko'rsatadi."""
     return {
@@ -1190,6 +1263,9 @@ def main() -> None:
     with st.spinner("Real narx, 10 yillik data va modellar tayyorlanmoqda..."):
         data, demo_mode = load_stock_data(ticker)
         live_quote = load_live_quote(ticker)
+        train_data, test_data, metrics_table, predictions, best_model_name = (
+            run_model_evaluation(data)
+        )
         future_forecasts = run_all_future_forecasts(data, forecast_months)
         rolling_summary, _rolling_details = run_cached_rolling_horizon_backtests(
             data,
@@ -1226,6 +1302,31 @@ def main() -> None:
     recent_volatility = float(
         data["Close"].pct_change().tail(63).std() * np.sqrt(252) * 100
     )
+    trailing_year_return = (
+        (float(data["Close"].iloc[-1]) / float(data["Close"].iloc[-252])) - 1
+    ) * 100
+    ema_20 = float(data["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
+    ema_50 = float(data["Close"].ewm(span=50, adjust=False).mean().iloc[-1])
+    forecast_end_values = future_forecasts[MODEL_NAMES].iloc[-1]
+    forecast_up_count = int((forecast_end_values > forecast_anchor).sum())
+    forecast_range_low = float(forecast_end_values.min())
+    forecast_range_high = float(forecast_end_values.max())
+    forecast_spread_pct = (
+        ((forecast_range_high - forecast_range_low) / forecast_anchor) * 100
+        if forecast_anchor
+        else 0.0
+    )
+
+    display_table = metrics_table.copy()
+    display_table["Model"] = display_table["Model"].map(format_model_label)
+    display_table.insert(0, "Rank", range(1, len(display_table) + 1))
+    display_table["Holat"] = display_table["Model"].map(
+        lambda model_name: (
+            "Eng yaxshi" if model_name == format_model_label(best_model_name) else ""
+        )
+    )
+    for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
+        display_table[column] = display_table[column].map(lambda value: round(value, 4))
 
     if best_future_model_name == BASELINE_NAME:
         st.info(
@@ -1255,6 +1356,52 @@ def main() -> None:
             forecast_months=forecast_months,
             best_forecast_end=best_forecast_end,
             forecast_delta=forecast_delta,
+        )
+
+    render_signal_strip(
+        trailing_year_return=trailing_year_return,
+        ema_20=ema_20,
+        ema_50=ema_50,
+        forecast_up_count=forecast_up_count,
+        total_models=len(MODEL_NAMES),
+        forecast_range_low=forecast_range_low,
+        forecast_range_high=forecast_range_high,
+        forecast_spread_pct=forecast_spread_pct,
+    )
+
+    test_left, test_right = st.columns([1.62, 0.88], gap="large")
+    with test_left:
+        st.markdown(
+            '<div class="section-title">Model test natijalari</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="section-note">Oxirgi 1 yillik holdout test: haqiqiy narx, benchmark va barcha model chiziqlari bitta grafikda.</div>',
+            unsafe_allow_html=True,
+        )
+        st.plotly_chart(
+            create_backtest_chart(
+                actual=test_data.loc[predictions[best_model_name].index, "Close"],
+                predictions=predictions,
+            ),
+            width="stretch",
+        )
+    with test_right:
+        st.markdown('<div class="section-title">Test jadvali</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-note">MAE, RMSE, MAPE va R² bo‘yicha kunlik test natijasi.</div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(display_table, width="stretch", hide_index=True)
+        st.markdown(
+            '<div class="table-note">RMSE kichikroq va R² kattaroq bo‘lsa, model testda yaxshiroq ishlagan.</div>',
+            unsafe_allow_html=True,
+        )
+        st.download_button(
+            "Holdout test CSV",
+            data=display_table.to_csv(index=False).encode("utf-8"),
+            file_name=f"{ticker}_holdout_test.csv",
+            mime="text/csv",
         )
 
     st.markdown('<div class="section-title">Prognoz va sifat</div>', unsafe_allow_html=True)
@@ -1303,25 +1450,13 @@ def main() -> None:
             mime="text/csv",
         )
 
-    with st.expander("Qo‘shimcha tekshiruvlar"):
+    with st.expander("Qo‘shimcha diagnostika"):
         with st.spinner("Qo'shimcha tekshiruvlar hisoblanmoqda..."):
-            train_data, test_data, metrics_table, predictions, best_model_name = (
-                run_model_evaluation(data)
-            )
             horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
                 data,
                 forecast_months,
             )
-        st.markdown("#### Oxirgi 1 yillik kunlik holdout test")
-        display_table = metrics_table.copy()
-        display_table.insert(0, "Rank", range(1, len(display_table) + 1))
-        display_table["Holat"] = display_table["Model"].map(
-            lambda model_name: "Eng yaxshi" if model_name == best_model_name else ""
-        )
-        for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
-            display_table[column] = display_table[column].map(lambda value: round(value, 4))
-        st.dataframe(display_table, width="stretch", hide_index=True)
-
+        st.markdown("#### Train/test kesimi")
         left_column, right_column = st.columns(2)
         with left_column:
             st.plotly_chart(
@@ -1338,13 +1473,6 @@ def main() -> None:
                 ),
                 width="stretch",
             )
-        st.plotly_chart(
-            create_backtest_chart(
-                actual=test_data.loc[predictions[best_model_name].index, "Close"],
-                predictions=predictions,
-            ),
-            width="stretch",
-        )
         st.markdown("#### Oxirgi horizon-matched backtest")
         st.caption(
             "Bu chart kelajak forecast bilan bir xil ufqda oxirgi tarixiy oynani ko‘rsatadi."
@@ -1370,13 +1498,6 @@ def main() -> None:
                     lambda value: round(value, 4)
                 )
             st.dataframe(walk_forward_display, width="stretch", hide_index=True)
-
-        st.download_button(
-            "Kunlik holdout testini CSV yuklab olish",
-            data=display_table.to_csv(index=False).encode("utf-8"),
-            file_name=f"{ticker}_daily_holdout_metrics.csv",
-            mime="text/csv",
-        )
 
     st.download_button(
         "Prognozlar CSV",
