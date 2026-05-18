@@ -1152,14 +1152,15 @@ def inject_custom_css() -> None:
             --border: #DCE3EC;
             --surface: #F6F8FB;
             --accent: #0F766E;
+            --soft: #EEF5F6;
         }
         [data-testid="stAppViewContainer"] {
             background: var(--surface);
         }
         .block-container {
-            max-width: 1280px;
-            padding-top: 1rem;
-            padding-bottom: 2rem;
+            max-width: 1320px;
+            padding-top: 1.1rem;
+            padding-bottom: 2.4rem;
         }
         .page-header {
             display: flex;
@@ -1187,39 +1188,40 @@ def inject_custom_css() -> None:
             text-align: right;
         }
         .control-panel {
-            padding: 0.8rem 1rem 0.35rem;
+            padding: 0.85rem 1rem 0.4rem;
             border-radius: 8px;
             background: var(--card);
             border: 1px solid var(--border);
-            margin-bottom: 1rem;
+            margin-bottom: 1.15rem;
         }
         .section-title {
             color: var(--ink);
-            font-size: 1.08rem;
+            font-size: 1.12rem;
             font-weight: 700;
-            margin: 0.35rem 0 0.18rem 0;
+            margin: 0;
         }
         .section-note {
             color: var(--muted);
             font-size: 0.88rem;
-            margin-bottom: 0.45rem;
+            margin-top: 0.18rem;
+            margin-bottom: 0;
         }
         .stock-header {
             display: flex;
             align-items: flex-end;
             justify-content: space-between;
             gap: 1rem;
-            margin: 0.2rem 0 0.9rem;
+            padding: 0.2rem 0 0.95rem;
         }
         .stock-name {
             color: var(--ink);
-            font-size: 2rem;
+            font-size: 2.18rem;
             font-weight: 700;
             line-height: 1.05;
         }
         .stock-price {
             color: var(--ink);
-            font-size: 1.7rem;
+            font-size: 1.82rem;
             font-weight: 700;
             text-align: right;
         }
@@ -1233,12 +1235,48 @@ def inject_custom_css() -> None:
         .stock-change.down {
             color: #B91C1C;
         }
-        .chart-toolbar {
+        .section-toolbar {
             display: flex;
             align-items: flex-end;
             justify-content: space-between;
             gap: 1rem;
-            margin-top: 1.2rem;
+            padding: 0.9rem 1rem 0.65rem;
+            margin-top: 1.15rem;
+            border: 1px solid var(--border);
+            border-bottom: 0;
+            border-radius: 8px 8px 0 0;
+            background: var(--card);
+        }
+        .section-toolbar-copy {
+            min-width: 0;
+        }
+        .toolbar-control [data-baseweb="select"] > div {
+            min-width: 190px;
+            border-color: var(--border);
+            background: #FBFCFD;
+        }
+        .toolbar-control label {
+            font-size: 0.78rem;
+            color: var(--muted);
+        }
+        .chart-shell + div[data-testid="stPlotlyChart"] {
+            margin-top: 0;
+        }
+        div[data-testid="stPlotlyChart"] {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 0 0 8px 8px;
+            padding: 0.1rem 0.15rem 0.15rem;
+        }
+        .stock-chart-shell + div[data-testid="stPlotlyChart"] {
+            border-radius: 8px;
+        }
+        .table-shell {
+            padding: 0.95rem 1rem 0.85rem;
+            margin-top: 1.15rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--card);
         }
         .summary-panel {
             min-height: 100%;
@@ -1443,6 +1481,7 @@ def inject_custom_css() -> None:
         }
         div[data-testid="stDataFrame"] {
             font-size: 0.85rem;
+            margin-top: 0.7rem;
         }
         div[data-testid="stDownloadButton"] button {
             width: 100%;
@@ -1452,13 +1491,19 @@ def inject_custom_css() -> None:
         }
         @media (max-width: 900px) {
             .stock-header,
-            .chart-toolbar {
+            .section-toolbar {
                 display: block;
             }
             .stock-price,
             .stock-change {
                 margin-top: 0.32rem;
                 text-align: left;
+            }
+            .toolbar-control {
+                margin-top: 0.75rem;
+            }
+            .toolbar-control [data-baseweb="select"] > div {
+                min-width: 0;
             }
             .page-header {
                 display: block;
@@ -1878,16 +1923,21 @@ def main() -> None:
         daily_delta=daily_delta,
         daily_delta_pct=daily_delta_pct,
     )
+    st.markdown('<div class="stock-chart-shell"></div>', unsafe_allow_html=True)
     st.plotly_chart(create_price_chart(data, ticker), width="stretch")
 
+    st.markdown('<div class="section-toolbar">', unsafe_allow_html=True)
     forecast_header, forecast_control = st.columns([3.3, 1.0], gap="large")
     with forecast_header:
+        st.markdown('<div class="section-toolbar-copy">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="section-note">Prognoz charti: default holatda barcha modellar, xohlasangiz bitta modelni tanlang.</div>',
             unsafe_allow_html=True,
         )
+        st.markdown("</div>", unsafe_allow_html=True)
     with forecast_control:
+        st.markdown('<div class="toolbar-control">', unsafe_allow_html=True)
         forecast_model_choice = st.selectbox(
             "Model tanlang",
             options=["Barcha modellar", *ALL_FORECAST_NAMES],
@@ -1897,6 +1947,9 @@ def main() -> None:
             ),
             key="forecast_model_choice",
         )
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div class="chart-shell"></div>', unsafe_allow_html=True)
     st.plotly_chart(
         create_multi_model_forecast_chart(
             data=data,
@@ -1907,21 +1960,27 @@ def main() -> None:
         width="stretch",
     )
 
+    st.markdown('<div class="table-shell">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Model test natijalari</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-note">Barcha modellar bo‘yicha kunlik holdout test jadvali.</div>',
         unsafe_allow_html=True,
     )
     st.dataframe(display_table, width="stretch", hide_index=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
+    st.markdown('<div class="section-toolbar">', unsafe_allow_html=True)
     train_header, train_control = st.columns([3.3, 1.0], gap="large")
     with train_header:
+        st.markdown('<div class="section-toolbar-copy">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Train va test davri</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="section-note">Default holatda barcha model chiziqlari, tanlanganda esa faqat bitta model ko‘rinadi.</div>',
             unsafe_allow_html=True,
         )
+        st.markdown("</div>", unsafe_allow_html=True)
     with train_control:
+        st.markdown('<div class="toolbar-control">', unsafe_allow_html=True)
         train_model_choice = st.selectbox(
             "Model tanlang",
             options=["Barcha modellar", *ALL_FORECAST_NAMES],
@@ -1931,6 +1990,9 @@ def main() -> None:
             ),
             key="train_model_choice",
         )
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div class="chart-shell"></div>', unsafe_allow_html=True)
     st.plotly_chart(
         create_train_test_model_chart(
             train_data=train_data,
