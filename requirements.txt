@@ -4,4 +4,3 @@ numpy
 yfinance
 scikit-learn
 plotly
-tensorflow

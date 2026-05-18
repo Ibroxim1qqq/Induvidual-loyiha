@@ -10,42 +10,35 @@ from typing import Callable
 # Ba'zi Windows tizimlarida joblib fizik yadrolarni aniqlay olmaydi.
 # Shu sababli ogohlantirish chiqmasligi uchun qiymatni oldindan belgilab qo'yamiz.
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import (
+    ExtraTreesRegressor,
+    GradientBoostingRegressor,
+    RandomForestRegressor,
+)
+from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
-
-try:
-    import tensorflow as tf
-    from tensorflow import keras
-
-    TENSORFLOW_AVAILABLE = True
-    tf.get_logger().setLevel("ERROR")
-except ImportError:
-    tf = None
-    keras = None
-    TENSORFLOW_AVAILABLE = False
+from sklearn.preprocessing import StandardScaler
 
 
 # Ilovadagi asosiy sozlamalar
 DEFAULT_TICKERS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL"]
 MODEL_NAMES = [
-    "Linear Regression",
+    "Ridge Regression",
     "Random Forest Regressor",
     "Gradient Boosting Regressor",
-    "LSTM Neural Network",
+    "Extra Trees Regressor",
 ]
+BASELINE_NAME = "Naive Baseline"
+ALL_FORECAST_NAMES = [BASELINE_NAME, *MODEL_NAMES]
 HISTORY_PERIOD = "10y"
 DEMO_PERIODS = 2520
 TEST_YEARS = 1
@@ -54,10 +47,9 @@ ROLLING_WINDOWS = (5, 10, 20, 30)
 RETURN_PERIODS = (1, 5, 10, 20)
 MOMENTUM_PERIODS = (5, 10, 20)
 EMA_SPANS = (5, 10, 20, 30)
-LSTM_LOOKBACK = 60
-WEEKLY_LOOKBACK = 52
 WEEKLY_RETURN_LAGS = 26
 WEEKLY_WINDOWS = (4, 8, 13, 26)
+ROLLING_BACKTEST_ORIGINS = 3
 FEATURE_COLUMNS = [
     *[f"lag_{lag}" for lag in range(1, LAG_DAYS + 1)],
     *[f"rolling_mean_{window}" for window in ROLLING_WINDOWS],
@@ -236,11 +228,11 @@ def build_feature_frame(data: pd.DataFrame) -> pd.DataFrame:
 def get_sklearn_model_builders() -> dict[str, Callable[[], object]]:
     """Ilovadagi klassik ML modellarini yaratadi."""
     return {
-        "Linear Regression": lambda: Pipeline(
-            [("scaler", StandardScaler()), ("model", LinearRegression())]
+        "Ridge Regression": lambda: Pipeline(
+            [("scaler", StandardScaler()), ("model", Ridge(alpha=2.0))]
         ),
         "Random Forest Regressor": lambda: RandomForestRegressor(
-            n_estimators=100,
+            n_estimators=140,
             min_samples_leaf=4,
             random_state=42,
             n_jobs=1,
@@ -251,87 +243,13 @@ def get_sklearn_model_builders() -> dict[str, Callable[[], object]]:
             max_depth=2,
             random_state=42,
         ),
+        "Extra Trees Regressor": lambda: ExtraTreesRegressor(
+            n_estimators=160,
+            min_samples_leaf=4,
+            random_state=42,
+            n_jobs=1,
+        ),
     }
-
-
-def build_lstm_model(output_units: int) -> object:
-    """Bir qavatli yengil LSTM modelini yaratadi."""
-    if not TENSORFLOW_AVAILABLE:
-        raise RuntimeError("TensorFlow o'rnatilmagan.")
-
-    tf.keras.utils.set_random_seed(42)
-    model = keras.Sequential(
-        [
-            keras.layers.Input(shape=(LSTM_LOOKBACK, 1)),
-            keras.layers.LSTM(48),
-            keras.layers.Dense(24, activation="relu"),
-            keras.layers.Dense(output_units),
-        ]
-    )
-    model.compile(optimizer="adam", loss="mse")
-    return model
-
-
-def create_lstm_one_step_dataset(
-    data: pd.DataFrame,
-    train_data: pd.DataFrame,
-    test_data: pd.DataFrame,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, pd.Index, MinMaxScaler]:
-    """LSTM uchun one-step train/test sequence to'plamlarini yaratadi."""
-    scaler = MinMaxScaler()
-    scaler.fit(train_data[["Close"]])
-    scaled_close = scaler.transform(data[["Close"]]).astype(np.float32).flatten()
-    train_last_position = data.index.get_loc(train_data.index.max())
-    test_first_position = data.index.get_loc(test_data.index.min())
-
-    x_train, y_train = [], []
-    for target_position in range(LSTM_LOOKBACK, train_last_position + 1):
-        x_train.append(scaled_close[target_position - LSTM_LOOKBACK : target_position])
-        y_train.append(scaled_close[target_position])
-
-    x_test = []
-    test_index = data.index[test_first_position:]
-    for target_position in range(test_first_position, len(data)):
-        x_test.append(scaled_close[target_position - LSTM_LOOKBACK : target_position])
-
-    return (
-        np.asarray(x_train, dtype=np.float32).reshape(-1, LSTM_LOOKBACK, 1),
-        np.asarray(y_train, dtype=np.float32),
-        np.asarray(x_test, dtype=np.float32).reshape(-1, LSTM_LOOKBACK, 1),
-        test_index,
-        scaler,
-    )
-
-
-def predict_lstm_holdout(
-    data: pd.DataFrame,
-    train_data: pd.DataFrame,
-    test_data: pd.DataFrame,
-) -> pd.Series:
-    """Oxirgi 1 yil uchun LSTM one-step bashoratini hisoblaydi."""
-    x_train, y_train, x_test, test_index, scaler = create_lstm_one_step_dataset(
-        data,
-        train_data,
-        test_data,
-    )
-    model = build_lstm_model(output_units=1)
-    early_stopping = keras.callbacks.EarlyStopping(
-        monitor="val_loss",
-        patience=5,
-        restore_best_weights=True,
-    )
-    model.fit(
-        x_train,
-        y_train,
-        epochs=25,
-        batch_size=64,
-        validation_split=0.1,
-        callbacks=[early_stopping],
-        verbose=0,
-    )
-    predictions = model.predict(x_test, verbose=0).reshape(-1, 1)
-    close_predictions = scaler.inverse_transform(predictions).flatten()
-    return pd.Series(close_predictions, index=test_index)
 
 
 def calculate_metrics(actual: pd.Series, predicted: pd.Series) -> dict[str, float]:
@@ -369,8 +287,10 @@ def evaluate_models(
     actual_close = test_features["Close"]
     previous_close = test_features["lag_1"]
 
-    predictions: dict[str, pd.Series] = {}
-    metrics_rows: list[dict[str, float | str]] = []
+    predictions: dict[str, pd.Series] = {BASELINE_NAME: previous_close.copy()}
+    metrics_rows: list[dict[str, float | str]] = [
+        {"Model": BASELINE_NAME, **calculate_metrics(actual_close, previous_close)}
+    ]
 
     for model_name, model_builder in get_sklearn_model_builders().items():
         model = model_builder()
@@ -384,13 +304,6 @@ def evaluate_models(
         metrics_rows.append(
             {"Model": model_name, **calculate_metrics(actual_close, predicted_close)}
         )
-
-    lstm_prediction = predict_lstm_holdout(data, train_data, test_data)
-    lstm_actual = data.loc[lstm_prediction.index, "Close"]
-    predictions["LSTM Neural Network"] = lstm_prediction
-    metrics_rows.append(
-        {"Model": "LSTM Neural Network", **calculate_metrics(lstm_actual, lstm_prediction)}
-    )
 
     metrics_table = pd.DataFrame(metrics_rows).sort_values(
         by=["RMSE", "MAE"],
@@ -416,6 +329,16 @@ def evaluate_models_with_walk_forward(data: pd.DataFrame) -> pd.DataFrame:
         x_test = x_all.iloc[test_index]
         actual_fold = actual_close.iloc[test_index]
         previous_fold = previous_close.iloc[test_index]
+
+        baseline_metrics = calculate_metrics(actual_fold, previous_fold)
+        fold_rows.append(
+            {
+                "Model": BASELINE_NAME,
+                "Fold": fold_number,
+                "RMSE": baseline_metrics["RMSE"],
+                "MAPE": baseline_metrics["MAPE"],
+            }
+        )
 
         for model_name, model_builder in get_sklearn_model_builders().items():
             model = model_builder()
@@ -468,208 +391,6 @@ def run_walk_forward_validation(data: pd.DataFrame) -> pd.DataFrame:
     return evaluate_models_with_walk_forward(data)
 
 
-def build_future_feature_row(history: list[float]) -> dict[str, float]:
-    """Kelajakdagi bitta kun uchun feature'lar hosil qiladi."""
-    history_series = pd.Series(history, dtype=float)
-    feature_row: dict[str, float] = {}
-
-    for lag in range(1, LAG_DAYS + 1):
-        feature_row[f"lag_{lag}"] = float(history[-lag])
-
-    for window in ROLLING_WINDOWS:
-        recent_values = history[-window:]
-        feature_row[f"rolling_mean_{window}"] = float(np.mean(recent_values))
-        feature_row[f"rolling_std_{window}"] = float(np.std(recent_values, ddof=1))
-
-    for period in RETURN_PERIODS:
-        feature_row[f"return_{period}"] = float(
-            history_series.pct_change(period).iloc[-1]
-        )
-
-    for period in MOMENTUM_PERIODS:
-        feature_row[f"momentum_{period}"] = float(history[-1] - history[-(period + 1)])
-
-    for span in EMA_SPANS:
-        feature_row[f"ema_{span}"] = float(
-            history_series.ewm(span=span, adjust=False).mean().iloc[-1]
-        )
-
-    feature_row["day_index"] = float(len(history))
-    return feature_row
-
-
-def fit_model_on_all_data(model_name: str, data: pd.DataFrame) -> object:
-    """Kelajak prognozi uchun tanlangan modelni barcha 10 yillik data bilan o'qitadi."""
-    feature_frame = build_feature_frame(data)
-    model = get_sklearn_model_builders()[model_name]()
-    model.fit(feature_frame[FEATURE_COLUMNS], feature_frame["target_change"])
-    return model
-
-
-def get_daily_change_limit(data: pd.DataFrame) -> float:
-    """Juda keskin va real bo'lmagan sakrashlarni cheklash uchun limit beradi."""
-    historical_changes = data["Close"].diff().abs().dropna()
-    return float(max(historical_changes.quantile(0.99), 1.0))
-
-
-def forecast_future(
-    data: pd.DataFrame,
-    model_name: str,
-    forecast_months: int,
-) -> pd.DataFrame:
-    """Tanlangan model bilan 3/6/12 oylik rekursiv prognoz yaratadi."""
-    last_date = data.index.max()
-    future_dates = pd.bdate_range(
-        start=last_date + pd.offsets.BDay(1),
-        end=last_date + pd.DateOffset(months=forecast_months),
-    )
-    fitted_model = fit_model_on_all_data(model_name, data)
-    history = data["Close"].astype(float).tolist()
-    future_values: list[float] = []
-    daily_change_limit = get_daily_change_limit(data)
-
-    for _future_date in future_dates:
-        feature_row = build_future_feature_row(history)
-        feature_df = pd.DataFrame([feature_row], columns=FEATURE_COLUMNS)
-        predicted_change = float(fitted_model.predict(feature_df)[0])
-        predicted_change = float(
-            np.clip(predicted_change, -daily_change_limit, daily_change_limit)
-        )
-        next_value = max(history[-1] + predicted_change, 0.01)
-
-        history.append(next_value)
-        future_values.append(next_value)
-
-    return pd.DataFrame({"Forecast": future_values}, index=future_dates)
-
-
-def forecast_future_direct_sklearn(
-    data: pd.DataFrame,
-    model_name: str,
-    forecast_months: int,
-) -> pd.DataFrame:
-    """Uzoq muddat uchun direct multi-horizon prognoz yaratadi."""
-    feature_frame = build_feature_frame(data)
-    latest_features = feature_frame.iloc[-1][FEATURE_COLUMNS]
-    latest_date = data.index.max()
-    latest_close = float(data["Close"].iloc[-1])
-    horizon_days = [21 * month for month in range(1, forecast_months + 1)]
-    anchor_dates = [latest_date + pd.offsets.BDay(days) for days in horizon_days]
-    anchor_values: list[float] = []
-
-    for horizon in horizon_days:
-        horizon_frame = feature_frame.copy()
-        horizon_frame["target_close_horizon"] = data["Close"].shift(-horizon).reindex(
-            horizon_frame.index
-        )
-        horizon_frame = horizon_frame.dropna()
-
-        model = get_sklearn_model_builders()[model_name]()
-        model.fit(
-            horizon_frame[FEATURE_COLUMNS],
-            horizon_frame["target_close_horizon"],
-        )
-        prediction = float(
-            model.predict(pd.DataFrame([latest_features], columns=FEATURE_COLUMNS))[0]
-        )
-        anchor_values.append(max(prediction, 0.01))
-
-    future_dates = pd.bdate_range(
-        start=latest_date + pd.offsets.BDay(1),
-        end=anchor_dates[-1],
-    )
-    anchor_series = pd.Series(
-        [latest_close, *anchor_values],
-        index=[latest_date, *anchor_dates],
-        dtype=float,
-    )
-    forecast_series = (
-        anchor_series.reindex(anchor_series.index.union(future_dates))
-        .sort_index()
-        .interpolate(method="time")
-        .reindex(future_dates)
-    )
-    return pd.DataFrame({"Forecast": forecast_series}, index=future_dates)
-
-
-def create_lstm_multi_horizon_dataset(
-    data: pd.DataFrame,
-    forecast_months: int,
-) -> tuple[np.ndarray, np.ndarray, MinMaxScaler]:
-    """Kelajakdagi oylik anchor nuqtalar uchun LSTM train data yaratadi."""
-    horizon_days = [21 * month for month in range(1, forecast_months + 1)]
-    max_horizon = max(horizon_days)
-    scaler = MinMaxScaler()
-    scaled_close = scaler.fit_transform(data[["Close"]]).astype(np.float32).flatten()
-
-    x_train, y_train = [], []
-    for end_position in range(LSTM_LOOKBACK, len(scaled_close) - max_horizon + 1):
-        x_train.append(scaled_close[end_position - LSTM_LOOKBACK : end_position])
-        y_train.append(
-            [scaled_close[end_position + horizon - 1] for horizon in horizon_days]
-        )
-
-    return (
-        np.asarray(x_train, dtype=np.float32).reshape(-1, LSTM_LOOKBACK, 1),
-        np.asarray(y_train, dtype=np.float32),
-        scaler,
-    )
-
-
-def forecast_future_direct_lstm(
-    data: pd.DataFrame,
-    forecast_months: int,
-) -> pd.DataFrame:
-    """LSTM yordamida direct multi-horizon kelajak prognozi yaratadi."""
-    x_train, y_train, scaler = create_lstm_multi_horizon_dataset(data, forecast_months)
-    model = build_lstm_model(output_units=forecast_months)
-    early_stopping = keras.callbacks.EarlyStopping(
-        monitor="val_loss",
-        patience=5,
-        restore_best_weights=True,
-    )
-    model.fit(
-        x_train,
-        y_train,
-        epochs=25,
-        batch_size=64,
-        validation_split=0.1,
-        callbacks=[early_stopping],
-        verbose=0,
-    )
-
-    latest_window = scaler.transform(data[["Close"]].tail(LSTM_LOOKBACK)).astype(
-        np.float32
-    )
-    scaled_anchors = model.predict(
-        latest_window.reshape(1, LSTM_LOOKBACK, 1),
-        verbose=0,
-    ).reshape(-1, 1)
-    anchor_values = scaler.inverse_transform(scaled_anchors).flatten()
-
-    latest_date = data.index.max()
-    anchor_dates = [
-        latest_date + pd.offsets.BDay(21 * month)
-        for month in range(1, forecast_months + 1)
-    ]
-    future_dates = pd.bdate_range(
-        start=latest_date + pd.offsets.BDay(1),
-        end=anchor_dates[-1],
-    )
-    anchor_series = pd.Series(
-        [float(data["Close"].iloc[-1]), *anchor_values],
-        index=[latest_date, *anchor_dates],
-        dtype=float,
-    )
-    forecast_series = (
-        anchor_series.reindex(anchor_series.index.union(future_dates))
-        .sort_index()
-        .interpolate(method="time")
-        .reindex(future_dates)
-    )
-    return pd.DataFrame({"Forecast": forecast_series}, index=future_dates)
-
-
 def build_weekly_frame(data: pd.DataFrame) -> pd.DataFrame:
     """Uzoq muddat forecast uchun haftalik close va return feature'larini yaratadi."""
     weekly = data["Close"].resample("W-FRI").last().dropna().to_frame("Close")
@@ -718,13 +439,13 @@ def build_weekly_target_matrix(
 
 def build_weekly_sklearn_model(model_name: str) -> object:
     """Haftalik multi-output forecast uchun klassik ML modelini yaratadi."""
-    if model_name == "Linear Regression":
+    if model_name == "Ridge Regression":
         return Pipeline(
-            [("scaler", StandardScaler()), ("model", LinearRegression())]
+            [("scaler", StandardScaler()), ("model", Ridge(alpha=2.0))]
         )
     if model_name == "Random Forest Regressor":
         return RandomForestRegressor(
-            n_estimators=120,
+            n_estimators=140,
             min_samples_leaf=4,
             random_state=42,
             n_jobs=1,
@@ -737,6 +458,13 @@ def build_weekly_sklearn_model(model_name: str) -> object:
                 max_depth=2,
                 random_state=42,
             )
+        )
+    if model_name == "Extra Trees Regressor":
+        return ExtraTreesRegressor(
+            n_estimators=160,
+            min_samples_leaf=4,
+            random_state=42,
+            n_jobs=1,
         )
     raise KeyError(model_name)
 
@@ -776,86 +504,35 @@ def forecast_weekly_sklearn(
     return pd.Series(predicted_prices, index=future_dates)
 
 
-def create_weekly_lstm_dataset(
-    weekly_frame: pd.DataFrame,
-    horizon_weeks: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Haftalik returnlar asosida LSTM multi-output dataset yaratadi."""
-    return_values = weekly_frame["return_1w"].to_numpy(dtype=np.float32)
-    x_train, y_train = [], []
-    for end_position in range(
-        WEEKLY_LOOKBACK,
-        len(return_values) - horizon_weeks + 1,
-    ):
-        x_train.append(return_values[end_position - WEEKLY_LOOKBACK : end_position])
-        y_train.append(return_values[end_position : end_position + horizon_weeks])
-    return (
-        np.asarray(x_train, dtype=np.float32).reshape(-1, WEEKLY_LOOKBACK, 1),
-        np.asarray(y_train, dtype=np.float32),
-    )
-
-
-def build_weekly_lstm_model(output_units: int) -> object:
-    """Haftalik direct multi-output forecast uchun LSTM modeli."""
-    if not TENSORFLOW_AVAILABLE:
-        raise RuntimeError("TensorFlow o'rnatilmagan.")
-    tf.keras.utils.set_random_seed(42)
-    model = keras.Sequential(
-        [
-            keras.layers.Input(shape=(WEEKLY_LOOKBACK, 1)),
-            keras.layers.LSTM(48),
-            keras.layers.Dense(24, activation="relu"),
-            keras.layers.Dense(output_units),
-        ]
-    )
-    model.compile(optimizer="adam", loss="mse")
-    return model
-
-
-def forecast_weekly_lstm(
-    data: pd.DataFrame,
-    horizon_weeks: int,
-) -> pd.Series:
-    """LSTM bilan haftalik direct multi-output forecast."""
-    weekly_frame = build_weekly_frame(data)
-    x_train, y_train = create_weekly_lstm_dataset(weekly_frame, horizon_weeks)
-    model = build_weekly_lstm_model(horizon_weeks)
-    early_stopping = keras.callbacks.EarlyStopping(
-        monitor="val_loss",
-        patience=5,
-        restore_best_weights=True,
-    )
-    model.fit(
-        x_train,
-        y_train,
-        epochs=35,
-        batch_size=32,
-        validation_split=0.1,
-        callbacks=[early_stopping],
-        verbose=0,
-    )
-    latest_window = weekly_frame["return_1w"].tail(WEEKLY_LOOKBACK).to_numpy(
-        dtype=np.float32
-    )
-    predicted_returns = model.predict(
-        latest_window.reshape(1, WEEKLY_LOOKBACK, 1),
-        verbose=0,
-    ).reshape(-1)
-    predicted_prices = returns_to_price_path(
-        float(weekly_frame["Close"].iloc[-1]),
-        predicted_returns,
-    )
-    future_dates = pd.date_range(
-        start=weekly_frame.index.max() + pd.offsets.Week(weekday=4),
-        periods=horizon_weeks,
-        freq="W-FRI",
-    )
-    return pd.Series(predicted_prices, index=future_dates)
-
-
 def get_horizon_weeks(forecast_months: int) -> int:
     """Oy sonini taxminiy trading haftalariga aylantiradi."""
     return {3: 13, 6: 26, 12: 52}[forecast_months]
+
+
+def forecast_weekly_baseline(data: pd.DataFrame, horizon_weeks: int) -> pd.Series:
+    """Kelajak uchun flat-price benchmark prognozini yaratadi."""
+    weekly_close = data["Close"].resample("W-FRI").last().dropna()
+    future_dates = pd.date_range(
+        start=weekly_close.index.max() + pd.offsets.Week(weekday=4),
+        periods=horizon_weeks,
+        freq="W-FRI",
+    )
+    return pd.Series(float(weekly_close.iloc[-1]), index=future_dates)
+
+
+def build_weekly_forecast_bundle(
+    data: pd.DataFrame,
+    horizon_weeks: int,
+) -> pd.DataFrame:
+    """Benchmark va 4 ta model prognozlarini bitta jadvalga yig'adi."""
+    forecasts = {
+        BASELINE_NAME: forecast_weekly_baseline(data, horizon_weeks),
+        **{
+            model_name: forecast_weekly_sklearn(data, model_name, horizon_weeks)
+            for model_name in MODEL_NAMES
+        },
+    }
+    return pd.DataFrame(forecasts)
 
 
 @st.cache_data(show_spinner=False)
@@ -863,17 +540,9 @@ def run_all_future_forecasts(
     data: pd.DataFrame,
     forecast_months: int,
 ) -> pd.DataFrame:
-    """4 ta model uchun haftalik multi-horizon prognozlarni yig'adi."""
+    """Benchmark va 4 ta model uchun haftalik prognozlarni yig'adi."""
     horizon_weeks = get_horizon_weeks(forecast_months)
-    forecasts = {
-        model_name: forecast_weekly_sklearn(data, model_name, horizon_weeks)
-        for model_name in get_sklearn_model_builders()
-    }
-    forecasts["LSTM Neural Network"] = forecast_weekly_lstm(
-        data,
-        horizon_weeks,
-    )
-    return pd.DataFrame(forecasts)
+    return build_weekly_forecast_bundle(data, horizon_weeks)
 
 
 def run_horizon_matched_backtest(
@@ -886,19 +555,7 @@ def run_horizon_matched_backtest(
     training_end = weekly_full.index[-(horizon_weeks + 1)]
     training_data = data.loc[:training_end].copy()
     actual_future = weekly_full.loc[weekly_full.index > training_end].iloc[:horizon_weeks]
-    backtest_forecasts = {
-        model_name: forecast_weekly_sklearn(
-            training_data,
-            model_name,
-            horizon_weeks,
-        )
-        for model_name in get_sklearn_model_builders()
-    }
-    backtest_forecasts["LSTM Neural Network"] = forecast_weekly_lstm(
-        training_data,
-        horizon_weeks,
-    )
-    backtest_frame = pd.DataFrame(backtest_forecasts)
+    backtest_frame = build_weekly_forecast_bundle(training_data, horizon_weeks)
     return actual_future, backtest_frame
 
 
@@ -909,6 +566,88 @@ def run_cached_horizon_backtest(
 ) -> tuple[pd.Series, pd.DataFrame]:
     """Horizon-matched backtestni cache qiladi."""
     return run_horizon_matched_backtest(data, forecast_months)
+
+
+def evaluate_rolling_horizon_backtests(
+    data: pd.DataFrame,
+    forecast_months: int,
+    origins: int = ROLLING_BACKTEST_ORIGINS,
+) -> pd.DataFrame:
+    """Bir nechta tarixiy origin bo'yicha uzoq muddat prognozlarini baholaydi."""
+    horizon_weeks = get_horizon_weeks(forecast_months)
+    weekly_full = data["Close"].resample("W-FRI").last().dropna()
+    rows: list[dict[str, float | int | str | bool]] = []
+
+    for origin in range(origins, 0, -1):
+        offset = origin * horizon_weeks + 1
+        if offset >= len(weekly_full):
+            continue
+
+        training_end = weekly_full.index[-offset]
+        training_data = data.loc[:training_end].copy()
+        actual_future = weekly_full.loc[weekly_full.index > training_end].iloc[:horizon_weeks]
+        forecasts = build_weekly_forecast_bundle(training_data, horizon_weeks)
+
+        if len(actual_future) != horizon_weeks or forecasts.empty:
+            continue
+
+        baseline_rmse = calculate_metrics(actual_future, forecasts[BASELINE_NAME])["RMSE"]
+        for model_name in ALL_FORECAST_NAMES:
+            metrics = calculate_metrics(actual_future, forecasts[model_name])
+            rows.append(
+                {
+                    "Origin": origin,
+                    "Model": model_name,
+                    **metrics,
+                    "Beats Benchmark": bool(metrics["RMSE"] < baseline_rmse),
+                }
+            )
+
+    if not rows:
+        raise ValueError("Rolling backtest uchun yetarli tarixiy ma'lumot yo'q.")
+
+    return pd.DataFrame(rows)
+
+
+def summarize_rolling_horizon_backtests(details: pd.DataFrame) -> pd.DataFrame:
+    """Rolling horizon testlarini model darajasida jamlaydi."""
+    baseline_rmse = float(
+        details.loc[details["Model"] == BASELINE_NAME, "RMSE"].mean()
+    )
+    win_counts = (
+        details.sort_values(["Origin", "RMSE", "MAE"])
+        .groupby("Origin", as_index=False)
+        .head(1)["Model"]
+        .value_counts()
+    )
+    summary = (
+        details.groupby("Model", as_index=False)
+        .agg(
+            MAE=("MAE", "mean"),
+            RMSE=("RMSE", "mean"),
+            MAPE=("MAPE", "mean"),
+            **{"R² Score": ("R² Score", "mean")},
+            Origins=("Origin", "nunique"),
+            **{"Benchmark Wins": ("Beats Benchmark", "sum")},
+        )
+        .sort_values(["RMSE", "MAE"], ascending=True)
+        .reset_index(drop=True)
+    )
+    summary["Wins"] = summary["Model"].map(win_counts).fillna(0).astype(int)
+    summary["Skill vs Benchmark"] = (
+        (baseline_rmse - summary["RMSE"]) / baseline_rmse * 100
+    )
+    return summary
+
+
+@st.cache_data(show_spinner=False)
+def run_cached_rolling_horizon_backtests(
+    data: pd.DataFrame,
+    forecast_months: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Rolling horizon tafsiloti va jamlanmasini cache qiladi."""
+    details = evaluate_rolling_horizon_backtests(data, forecast_months)
+    return summarize_rolling_horizon_backtests(details), details
 
 
 def apply_chart_style(figure: go.Figure, title: str) -> go.Figure:
@@ -1052,12 +791,13 @@ def create_backtest_chart(
     actual: pd.Series,
     predictions: dict[str, pd.Series],
 ) -> go.Figure:
-    """Oxirgi 1 yillik test davrida barcha modellarni bitta grafikda ko'rsatadi."""
+    """Oxirgi 1 yillik test davrida benchmark va modellarni ko'rsatadi."""
     colors = {
-        "Linear Regression": "#2563EB",
-        "Random Forest Regressor": "#0F766E",
+        BASELINE_NAME: "#64748B",
+        "Ridge Regression": "#0F766E",
+        "Random Forest Regressor": "#2563EB",
         "Gradient Boosting Regressor": "#F97316",
-        "LSTM Neural Network": "#7C3AED",
+        "Extra Trees Regressor": "#7C3AED",
     }
     figure = go.Figure()
     figure.add_trace(
@@ -1069,17 +809,21 @@ def create_backtest_chart(
             line=dict(color="#0F172A", width=3),
         )
     )
-    for model_name in MODEL_NAMES:
+    for model_name in ALL_FORECAST_NAMES:
         figure.add_trace(
             go.Scatter(
                 x=predictions[model_name].index,
                 y=predictions[model_name],
                 mode="lines",
                 name=model_name,
-                line=dict(color=colors[model_name], width=1.9, dash="dash"),
+                line=dict(
+                    color=colors[model_name],
+                    width=2.2 if model_name == BASELINE_NAME else 1.9,
+                    dash="dot" if model_name == BASELINE_NAME else "dash",
+                ),
             )
         )
-    return apply_chart_style(figure, "Backtest: haqiqiy narx va 4 model")
+    return apply_chart_style(figure, "Kunlik backtest: haqiqiy narx, benchmark va modellar")
 
 
 def create_horizon_backtest_chart(
@@ -1088,10 +832,11 @@ def create_horizon_backtest_chart(
 ) -> go.Figure:
     """Kelajak forecast bilan bir xil ufqdagi tarixiy backtest charti."""
     colors = {
-        "Linear Regression": "#2563EB",
-        "Random Forest Regressor": "#0F766E",
+        BASELINE_NAME: "#64748B",
+        "Ridge Regression": "#0F766E",
+        "Random Forest Regressor": "#2563EB",
         "Gradient Boosting Regressor": "#F97316",
-        "LSTM Neural Network": "#7C3AED",
+        "Extra Trees Regressor": "#7C3AED",
     }
     figure = go.Figure()
     figure.add_trace(
@@ -1103,14 +848,18 @@ def create_horizon_backtest_chart(
             line=dict(color="#0F172A", width=3),
         )
     )
-    for model_name in MODEL_NAMES:
+    for model_name in ALL_FORECAST_NAMES:
         figure.add_trace(
             go.Scatter(
                 x=forecasts.index,
                 y=forecasts[model_name],
                 mode="lines",
                 name=model_name,
-                line=dict(color=colors[model_name], width=2.1, dash="dash"),
+                line=dict(
+                    color=colors[model_name],
+                    width=2.3 if model_name == BASELINE_NAME else 2.1,
+                    dash="dot" if model_name == BASELINE_NAME else "dash",
+                ),
             )
         )
     return apply_chart_style(
@@ -1125,7 +874,7 @@ def create_horizon_metrics_table(
 ) -> pd.DataFrame:
     """Future usuliga mos backtest metrikalarini hisoblaydi."""
     rows = []
-    for model_name in MODEL_NAMES:
+    for model_name in ALL_FORECAST_NAMES:
         metrics = calculate_metrics(actual, forecasts[model_name])
         rows.append({"Model": model_name, **metrics})
     return pd.DataFrame(rows).sort_values(["RMSE", "MAE"]).reset_index(drop=True)
@@ -1136,13 +885,14 @@ def create_multi_model_forecast_chart(
     future_forecasts: pd.DataFrame,
     best_model_name: str,
 ) -> go.Figure:
-    """Barcha 4 modelning kelajak prognozini bitta chartda ko'rsatadi."""
+    """Benchmark va 4 ta modelning kelajak prognozini bitta chartda ko'rsatadi."""
     recent_history = data.tail(180)
     colors = {
-        "Linear Regression": "#2563EB",
-        "Random Forest Regressor": "#0F766E",
+        BASELINE_NAME: "#64748B",
+        "Ridge Regression": "#0F766E",
+        "Random Forest Regressor": "#2563EB",
         "Gradient Boosting Regressor": "#F97316",
-        "LSTM Neural Network": "#7C3AED",
+        "Extra Trees Regressor": "#7C3AED",
     }
     figure = go.Figure()
     figure.add_trace(
@@ -1154,7 +904,7 @@ def create_multi_model_forecast_chart(
             line=dict(color="#2563EB", width=2.4),
         )
     )
-    for model_name in MODEL_NAMES:
+    for model_name in ALL_FORECAST_NAMES:
         is_best = model_name == best_model_name
         figure.add_trace(
             go.Scatter(
@@ -1165,74 +915,71 @@ def create_multi_model_forecast_chart(
                 line=dict(
                     color=colors[model_name],
                     width=3.2 if is_best else 2.2,
-                    dash="solid" if is_best else "dash",
+                    dash=(
+                        "dot"
+                        if model_name == BASELINE_NAME and not is_best
+                        else "solid"
+                        if is_best
+                        else "dash"
+                    ),
                 ),
                 marker=dict(size=5),
             )
         )
-    return apply_chart_style(figure, "Kelajak prognozi — 4 model taqqoslanishi")
+    return apply_chart_style(figure, "Kelajak prognozi: benchmark va 4 model")
 
 
 def inject_custom_css() -> None:
-    """Streamlit interfeysiga yengil, zamonaviy dizayn beradi."""
+    """Streamlit interfeysiga professional, ixcham dizayn beradi."""
     st.markdown(
         """
         <style>
         :root {
             --ink: #0F172A;
             --muted: #475569;
-            --card: rgba(255, 255, 255, 0.86);
-            --border: rgba(148, 163, 184, 0.22);
+            --card: #FFFFFF;
+            --border: #DCE3EC;
+            --surface: #F7F9FC;
         }
         [data-testid="stAppViewContainer"] {
-            background:
-                radial-gradient(circle at top left, rgba(124, 58, 237, 0.16), transparent 28%),
-                radial-gradient(circle at top right, rgba(37, 99, 235, 0.14), transparent 26%),
-                linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
-        }
-        [data-testid="stSidebar"] {
-            background: rgba(15, 23, 42, 0.96);
-        }
-        [data-testid="stSidebar"] * {
-            color: #F8FAFC;
+            background: var(--surface);
         }
         .block-container {
-            padding-top: 1.4rem;
-            padding-bottom: 2.4rem;
+            max-width: 1320px;
+            padding-top: 1.2rem;
+            padding-bottom: 2rem;
         }
-        .hero {
-            padding: 1.55rem 1.7rem;
-            border-radius: 28px;
-            background: linear-gradient(135deg, #0F172A 0%, #312E81 55%, #2563EB 100%);
-            color: white;
-            box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
-            margin-bottom: 1rem;
+        .page-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 0.9rem;
         }
-        .hero h1 {
-            margin: 0 0 0.35rem 0;
+        .eyebrow {
+            color: #0F766E;
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 0.2rem;
+        }
+        .page-header h1 {
+            margin: 0;
+            color: var(--ink);
             font-size: 2rem;
             line-height: 1.05;
         }
-        .hero p {
-            margin: 0;
-            color: rgba(255,255,255,0.82);
-        }
-        .hero-chip {
-            display: inline-block;
-            margin-top: 0.8rem;
-            margin-right: 0.45rem;
-            padding: 0.28rem 0.7rem;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.16);
-            font-size: 0.82rem;
+        .header-note {
+            color: var(--muted);
+            font-size: 0.86rem;
+            text-align: right;
         }
         .kpi-card {
-            padding: 1rem 1.05rem;
-            border-radius: 22px;
+            min-height: 88px;
+            padding: 0.9rem 1rem;
+            border-radius: 8px;
             background: var(--card);
             border: 1px solid var(--border);
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-            min-height: 96px;
         }
         .kpi-label {
             color: var(--muted);
@@ -1241,7 +988,7 @@ def inject_custom_css() -> None:
         }
         .kpi-value {
             color: var(--ink);
-            font-size: 1.55rem;
+            font-size: 1.35rem;
             font-weight: 700;
         }
         .kpi-note {
@@ -1249,49 +996,32 @@ def inject_custom_css() -> None:
             font-size: 0.78rem;
             margin-top: 0.18rem;
         }
-        .section-card {
-            padding: 1rem;
-            border-radius: 24px;
+        .control-panel {
+            padding: 0.85rem 1rem 0.45rem;
+            border-radius: 8px;
             background: var(--card);
             border: 1px solid var(--border);
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
-        }
-        .control-panel {
-            padding: 1rem 1.1rem;
-            border-radius: 24px;
-            background: rgba(255,255,255,0.82);
-            border: 1px solid var(--border);
-            box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
-            margin-bottom: 1rem;
+            margin-bottom: 1.1rem;
         }
         .section-title {
             color: var(--ink);
-            font-size: 1.2rem;
+            font-size: 1.08rem;
             font-weight: 700;
-            margin: 1.2rem 0 0.35rem 0;
+            margin: 1.2rem 0 0.2rem 0;
         }
         .section-note {
             color: var(--muted);
             font-size: 0.88rem;
             margin-bottom: 0.55rem;
         }
-        .insight-card {
-            padding: 1rem 1.1rem;
-            border-radius: 22px;
-            background: rgba(255,255,255,0.8);
-            border: 1px solid var(--border);
-            box-shadow: 0 10px 24px rgba(15,23,42,0.06);
-            height: 100%;
-        }
-        .insight-title {
-            color: var(--ink);
-            font-weight: 700;
-            margin-bottom: 0.35rem;
-        }
-        .insight-body {
-            color: var(--muted);
-            font-size: 0.88rem;
-            line-height: 1.45;
+        @media (max-width: 900px) {
+            .page-header {
+                display: block;
+            }
+            .header-note {
+                margin-top: 0.35rem;
+                text-align: left;
+            }
         }
         </style>
         """,
@@ -1299,16 +1029,16 @@ def inject_custom_css() -> None:
     )
 
 
-def render_hero(ticker: str) -> None:
-    """Sahifa tepasidagi dizayn blokini chiqaradi."""
+def render_page_header(ticker: str) -> None:
+    """Sahifa tepasidagi ishchi sarlavhani chiqaradi."""
     st.markdown(
         f"""
-        <div class="hero">
-            <h1>📈 Aksiya Forecast Lab</h1>
-            <p>{ticker} uchun real narx, real chart va 10 yillik data asosidagi 4 model prognozi.</p>
-            <span class="hero-chip">10 yil data</span>
-            <span class="hero-chip">ML + LSTM</span>
-            <span class="hero-chip">3 / 6 / 12 oy forecast</span>
+        <div class="page-header">
+            <div>
+                <div class="eyebrow">Aksiya prognoz paneli</div>
+                <h1>{ticker}</h1>
+            </div>
+            <div class="header-note">10 yillik tarix · benchmark · rolling backtest</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1329,24 +1059,11 @@ def render_kpi_card(label: str, value: str, note: str) -> None:
     )
 
 
-def render_insight_card(title: str, body: str) -> None:
-    """Metodologiyani sodda tilda tushuntiruvchi kartani chiqaradi."""
-    st.markdown(
-        f"""
-        <div class="insight-card">
-            <div class="insight-title">{title}</div>
-            <div class="insight-body">{body}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def main() -> None:
     """Streamlit interfeysini ishga tushiradi."""
     st.set_page_config(
-        page_title="Aksiya Forecast Lab",
-        page_icon="📈",
+        page_title="Aksiya prognoz paneli",
+        page_icon="📊",
         layout="wide",
     )
     inject_custom_css()
@@ -1385,8 +1102,16 @@ def main() -> None:
             run_model_evaluation(data)
         )
         future_forecasts = run_all_future_forecasts(data, forecast_months)
+        rolling_summary, _rolling_details = run_cached_rolling_horizon_backtests(
+            data,
+            forecast_months,
+        )
+        horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
+            data,
+            forecast_months,
+        )
 
-    render_hero(ticker)
+    render_page_header(ticker)
 
     if demo_mode:
         st.warning(
@@ -1405,135 +1130,121 @@ def main() -> None:
     )
     daily_delta = latest_close - previous_close
     daily_delta_pct = (daily_delta / previous_close) * 100
-    horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
-        data,
-        forecast_months,
-    )
-    horizon_metrics = create_horizon_metrics_table(horizon_actual, horizon_forecasts)
-    best_future_model_name = str(horizon_metrics.iloc[0]["Model"])
+    best_future_model_name = str(rolling_summary.iloc[0]["Model"])
+    best_future_skill = float(rolling_summary.iloc[0]["Skill vs Benchmark"])
     best_forecast_end = float(future_forecasts[best_future_model_name].iloc[-1])
-    forecast_delta = best_forecast_end - latest_close
+    forecast_anchor = float(data["Close"].iloc[-1])
+    forecast_delta = best_forecast_end - forecast_anchor
+    trailing_year = data.tail(252)
+    trailing_low = float(trailing_year["Low"].min())
+    trailing_high = float(trailing_year["High"].max())
+    recent_volatility = float(
+        data["Close"].pct_change().tail(63).std() * np.sqrt(252) * 100
+    )
 
-    kpi_columns = st.columns(4)
+    kpi_columns = st.columns(5)
     with kpi_columns[0]:
         render_kpi_card(
-            "Hozirgi real narx",
+            "Hozirgi narx",
             f"${latest_close:,.2f}",
-            f"{daily_delta:+.2f} ({daily_delta_pct:+.2f}%)",
+            live_quote["source"],
         )
     with kpi_columns[1]:
         render_kpi_card(
-            "Eng yaxshi uzoq muddat modeli",
-            best_future_model_name,
-            f"{forecast_months} oylik backtest bo'yicha",
+            "Kunlik o'zgarish",
+            f"{daily_delta:+.2f}",
+            f"{daily_delta_pct:+.2f}%",
         )
     with kpi_columns[2]:
         render_kpi_card(
-            "Data hajmi",
-            f"{len(data):,} kun",
-            "Model treningi uchun 10 yil",
+            "52 haftalik oralig'",
+            f"${trailing_low:,.0f} - ${trailing_high:,.0f}",
+            f"3 oylik volatillik: {recent_volatility:.1f}%",
         )
     with kpi_columns[3]:
         render_kpi_card(
-            f"{forecast_months} oy prognozi",
+            "Tanlangan prognoz",
+            best_future_model_name,
+            (
+                "Benchmark yetakchi"
+                if best_future_model_name == BASELINE_NAME
+                else f"Benchmarkdan {best_future_skill:+.1f}%"
+            ),
+        )
+    with kpi_columns[4]:
+        render_kpi_card(
+            f"{forecast_months} oy yakuni",
             f"${best_forecast_end:,.2f}",
-            f"Joriy narxdan: {forecast_delta:+.2f}",
+            f"Oxirgi close'dan: {forecast_delta:+.2f}",
         )
 
-    st.markdown('<div class="section-title">Real bozor ma’lumoti</div>', unsafe_allow_html=True)
+    if best_future_model_name == BASELINE_NAME:
+        st.info(
+            "Rolling backtest natijasida oddiy benchmark eng yaxshi chiqdi. "
+            "Ilova buni yashirmaydi: murakkab model benchmarkdan ustun bo'lmasa, "
+            "eng ishonchli signal sifatida benchmark ko'rsatiladi."
+        )
+
+    st.markdown('<div class="section-title">Bozor grafigi</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-note">Tanlangan aksiyaning haqiqiy narxi va oxirgi 12 oylik real harakati.</div>',
+        '<div class="section-note">Oxirgi 12 oy narxi, EMA 20 va EMA 50 bilan.</div>',
         unsafe_allow_html=True,
     )
-    st.plotly_chart(create_price_chart(data, ticker), use_container_width=True)
+    st.plotly_chart(create_price_chart(data, ticker), width="stretch")
 
     st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-note">4 ta model bir grafikda. Bu grafik 10 yillik tarixdan o‘rganilgan haftalik multi-horizon return prognozi asosida quriladi; u faqat birinchi kun yo‘nalishini ko‘chirib ketmaydi.</div>',
+        '<div class="section-note">Benchmark va 4 ta model bir xil tarixiy featurelar asosida solishtiriladi.</div>',
         unsafe_allow_html=True,
     )
     st.plotly_chart(
         create_multi_model_forecast_chart(data, future_forecasts, best_future_model_name),
-        use_container_width=True,
+        width="stretch",
     )
-    st.markdown('<div class="section-title">Uzoq muddat prognozi testi</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title">Prognoz sifati</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-note">Bu jadval aynan kelajak forecast usulini tarixda sinaydi. U 1 kunlik testdan ko‘ra 3/6/12 oylik prognoz sifati uchun muhimroq.</div>',
+        '<div class="section-note">Asosiy tanlov bir martalik split emas, rolling backtest oynalari o‘rtachasi bo‘yicha qilinadi.</div>',
         unsafe_allow_html=True,
     )
-    horizon_display = horizon_metrics.copy()
+    horizon_display = rolling_summary[
+        [
+            "Model",
+            "RMSE",
+            "MAPE",
+            "Wins",
+            "Benchmark Wins",
+            "Skill vs Benchmark",
+        ]
+    ].copy()
     horizon_display.insert(0, "Rank", range(1, len(horizon_display) + 1))
-    for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
+    for column in ["RMSE", "MAPE", "Skill vs Benchmark"]:
         horizon_display[column] = horizon_display[column].map(lambda value: round(value, 4))
-    st.dataframe(horizon_display, use_container_width=True, hide_index=True)
+    st.dataframe(horizon_display, width="stretch", hide_index=True)
 
-    st.markdown('<div class="section-title">Model sifati</div>', unsafe_allow_html=True)
-    insight_columns = st.columns(3)
-    with insight_columns[0]:
-        render_insight_card(
-            "Linear Regression",
-            "Oddiy va tushunarli baseline model. Natijalarni taqqoslash uchun muhim tayanch beradi.",
-        )
-    with insight_columns[1]:
-        render_insight_card(
-            "Tree-based ML",
-            "Random Forest va Gradient Boosting murakkab nolinear bog‘lanishlarni o‘rganadi.",
-        )
-    with insight_columns[2]:
-        render_insight_card(
-            "LSTM",
-            "Ketma-ketlikni ko‘radigan deep learning model; vaqt qatorlari uchun aynan mos yondashuv.",
-        )
-
-    st.markdown('<div class="section-title">Metodologiya</div>', unsafe_allow_html=True)
-    method_columns = st.columns(3)
-    with method_columns[0]:
-        render_insight_card(
-            "10 yillik o‘quv data",
-            "Model bir necha bozor sikllarini ko‘radi; bu qisqa tarixga qaraganda barqarorroq o‘rganishga yordam beradi.",
-        )
-    with method_columns[1]:
-        render_insight_card(
-            "Walk-forward tekshiruv",
-            "Qo‘shimcha ilmiy tekshiruv sifatida vaqt tartibi saqlanadi va klassik ML modellar bir nechta tarixiy kesimlarda sinovdan o‘tadi.",
-        )
-    with method_columns[2]:
-        render_insight_card(
-            "Holdout test",
-            "Oxirgi 1 yil alohida qoldiriladi; jadvaldagi asosiy natijalar aynan shu real sinov davridan olinadi.",
-        )
-
-    st.markdown('<div class="section-title">Test natijalari</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-note">Oxirgi 1 yillik holdout davrida tekshirilgan real metrikalar.</div>',
-        unsafe_allow_html=True,
-    )
-    display_table = metrics_table.copy()
-    display_table.insert(0, "Rank", range(1, len(display_table) + 1))
-    display_table["Holat"] = display_table["Model"].map(
-        lambda model_name: "Eng yaxshi" if model_name == best_model_name else ""
-    )
-    for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
-        display_table[column] = display_table[column].map(lambda value: round(value, 4))
-    st.dataframe(display_table, use_container_width=True, hide_index=True)
-    if best_model_name != "LSTM Neural Network":
-        st.info(
-            "Murakkab model har doim ham eng yaxshi natija bermaydi: aksiya narxlari juda "
-            "shovqinli bo‘lgani uchun bu tickerda soddaroq model LSTMdan yaxshi ishlashi mumkin."
-        )
     st.download_button(
-        "Test natijalarini CSV yuklab olish",
-        data=display_table.to_csv(index=False).encode("utf-8"),
-        file_name=f"{ticker}_model_metrics.csv",
+        "Rolling backtest jadvalini CSV yuklab olish",
+        data=rolling_summary.to_csv(index=False).encode("utf-8"),
+        file_name=f"{ticker}_{forecast_months}oy_rolling_backtest.csv",
         mime="text/csv",
     )
 
-    with st.expander("Qo‘shimcha model tekshiruvlarini ko‘rish"):
+    with st.expander("Qo‘shimcha tekshiruvlar"):
+        st.markdown("#### Oxirgi 1 yillik kunlik holdout test")
+        display_table = metrics_table.copy()
+        display_table.insert(0, "Rank", range(1, len(display_table) + 1))
+        display_table["Holat"] = display_table["Model"].map(
+            lambda model_name: "Eng yaxshi" if model_name == best_model_name else ""
+        )
+        for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
+            display_table[column] = display_table[column].map(lambda value: round(value, 4))
+        st.dataframe(display_table, width="stretch", hide_index=True)
+
         left_column, right_column = st.columns(2)
         with left_column:
             st.plotly_chart(
                 create_train_test_chart(train_data, test_data),
-                use_container_width=True,
+                width="stretch",
             )
         with right_column:
             selected_actual = test_data.loc[predictions[best_model_name].index, "Close"]
@@ -1543,29 +1254,26 @@ def main() -> None:
                     predicted=predictions[best_model_name],
                     model_name=best_model_name,
                 ),
-                use_container_width=True,
+                width="stretch",
             )
         st.plotly_chart(
             create_backtest_chart(
                 actual=test_data.loc[predictions[best_model_name].index, "Close"],
                 predictions=predictions,
             ),
-            use_container_width=True,
+            width="stretch",
         )
-        st.markdown("#### Future usuliga teng backtest")
+        st.markdown("#### Oxirgi horizon-matched backtest")
         st.caption(
-            "Bu chart kelajak forecast bilan aynan bir xil usulni tarixga qo‘llaydi. "
-            "Shuning uchun prognoz qanchalik real ishlashini ko‘rsatishda 1 kunlik testdan ko‘ra halolroq."
+            "Bu chart kelajak forecast bilan bir xil ufqda oxirgi tarixiy oynani ko‘rsatadi."
         )
         st.plotly_chart(
             create_horizon_backtest_chart(horizon_actual, horizon_forecasts),
-            use_container_width=True,
+            width="stretch",
         )
         st.markdown("#### Klassik ML uchun walk-forward validation")
         st.caption(
-            "Bu qo‘shimcha tekshiruv `Linear Regression`, `Random Forest` va "
-            "`Gradient Boosting` modellarining vaqt bo‘yicha barqarorligini ko‘rsatadi. "
-            "`LSTM` uchun asosiy taqqoslash holdout test jadvalida berilgan."
+            "Kunlik model sifati vaqt bo‘yicha qanchalik barqarorligini ko‘rsatadi."
         )
         if st.button("Walk-forward tekshiruvni hisoblash"):
             walk_forward_table = run_walk_forward_validation(data)
@@ -1579,7 +1287,14 @@ def main() -> None:
                 walk_forward_display[column] = walk_forward_display[column].map(
                     lambda value: round(value, 4)
                 )
-            st.dataframe(walk_forward_display, use_container_width=True, hide_index=True)
+            st.dataframe(walk_forward_display, width="stretch", hide_index=True)
+
+        st.download_button(
+            "Kunlik holdout testini CSV yuklab olish",
+            data=display_table.to_csv(index=False).encode("utf-8"),
+            file_name=f"{ticker}_daily_holdout_metrics.csv",
+            mime="text/csv",
+        )
 
     st.download_button(
         "Prognozlarni CSV yuklab olish",
