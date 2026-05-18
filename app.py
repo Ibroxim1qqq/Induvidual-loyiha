@@ -1001,8 +1001,9 @@ def create_multi_model_forecast_chart(
     data: pd.DataFrame,
     future_forecasts: pd.DataFrame,
     best_model_name: str,
+    visible_models: list[str],
 ) -> go.Figure:
-    """Benchmark, modellar va ansambllarning kelajak prognozini ko'rsatadi."""
+    """Tanlangan modellar bo'yicha kelajak prognozini ko'rsatadi."""
     recent_history = data.tail(180)
     colors = {
         BASELINE_NAME: "#64748B",
@@ -1023,33 +1024,34 @@ def create_multi_model_forecast_chart(
             line=dict(color="#2563EB", width=2.4),
         )
     )
-    model_band = future_forecasts[MODEL_NAMES]
-    model_low = model_band.min(axis=1)
-    model_high = model_band.max(axis=1)
-    figure.add_trace(
-        go.Scatter(
-            x=model_low.index,
-            y=model_low,
-            mode="lines",
-            name="Model diapazoni",
-            line=dict(color="rgba(15,118,110,0)", width=0),
-            hoverinfo="skip",
-            showlegend=False,
+    if len(visible_models) > 1:
+        model_band = future_forecasts[MODEL_NAMES]
+        model_low = model_band.min(axis=1)
+        model_high = model_band.max(axis=1)
+        figure.add_trace(
+            go.Scatter(
+                x=model_low.index,
+                y=model_low,
+                mode="lines",
+                name="Model diapazoni",
+                line=dict(color="rgba(15,118,110,0)", width=0),
+                hoverinfo="skip",
+                showlegend=False,
+            )
         )
-    )
-    figure.add_trace(
-        go.Scatter(
-            x=model_high.index,
-            y=model_high,
-            mode="lines",
-            name="Model diapazoni",
-            fill="tonexty",
-            fillcolor="rgba(15,118,110,0.11)",
-            line=dict(color="rgba(15,118,110,0)", width=0),
-            hoverinfo="skip",
+        figure.add_trace(
+            go.Scatter(
+                x=model_high.index,
+                y=model_high,
+                mode="lines",
+                name="Model diapazoni",
+                fill="tonexty",
+                fillcolor="rgba(15,118,110,0.11)",
+                line=dict(color="rgba(15,118,110,0)", width=0),
+                hoverinfo="skip",
+            )
         )
-    )
-    for model_name in ALL_FORECAST_NAMES:
+    for model_name in visible_models:
         is_best = model_name == best_model_name
         is_baseline = model_name == BASELINE_NAME
         figure.add_trace(
@@ -1074,6 +1076,68 @@ def create_multi_model_forecast_chart(
             )
         )
     return apply_chart_style(figure, "Kelajak prognozi")
+
+
+def create_train_test_model_chart(
+    train_data: pd.DataFrame,
+    test_data: pd.DataFrame,
+    predictions: dict[str, pd.Series],
+    best_model_name: str,
+    visible_models: list[str],
+) -> go.Figure:
+    """Train/test davri va tanlangan model natijalarini ko'rsatadi."""
+    colors = {
+        BASELINE_NAME: "#64748B",
+        "Ridge Regression": "#0F766E",
+        "Random Forest Regressor": "#2563EB",
+        "Gradient Boosting Regressor": "#F97316",
+        "Extra Trees Regressor": "#7C3AED",
+        ENSEMBLE_NAME: "#DB2777",
+        BLEND_NAME: "#0891B2",
+    }
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=train_data.index,
+            y=train_data["Close"],
+            mode="lines",
+            name="Train",
+            line=dict(color="#94A3B8", width=2.1),
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=test_data.index,
+            y=test_data["Close"],
+            mode="lines",
+            name="Test haqiqiy",
+            line=dict(color="#0F172A", width=2.8),
+        )
+    )
+    for model_name in visible_models:
+        is_best = model_name == best_model_name
+        is_baseline = model_name == BASELINE_NAME
+        figure.add_trace(
+            go.Scatter(
+                x=predictions[model_name].index,
+                y=predictions[model_name],
+                mode="lines",
+                name=f"{format_model_label(model_name)}{' ★' if is_best else ''}",
+                line=dict(
+                    color=colors[model_name],
+                    width=3.0 if is_best else 2.2 if is_baseline else 1.7,
+                    dash=(
+                        "dot"
+                        if is_baseline and not is_best
+                        else "solid"
+                        if is_best
+                        else "dash"
+                    ),
+                ),
+                opacity=1.0 if is_best or is_baseline else 0.72,
+            )
+        )
+    return apply_chart_style(figure, "Train va test davri")
 
 
 def inject_custom_css() -> None:
@@ -1139,6 +1203,42 @@ def inject_custom_css() -> None:
             color: var(--muted);
             font-size: 0.88rem;
             margin-bottom: 0.45rem;
+        }
+        .stock-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin: 0.2rem 0 0.9rem;
+        }
+        .stock-name {
+            color: var(--ink);
+            font-size: 2rem;
+            font-weight: 700;
+            line-height: 1.05;
+        }
+        .stock-price {
+            color: var(--ink);
+            font-size: 1.7rem;
+            font-weight: 700;
+            text-align: right;
+        }
+        .stock-change {
+            color: #15803D;
+            font-size: 0.88rem;
+            font-weight: 600;
+            text-align: right;
+            margin-top: 0.16rem;
+        }
+        .stock-change.down {
+            color: #B91C1C;
+        }
+        .chart-toolbar {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-top: 1.2rem;
         }
         .summary-panel {
             min-height: 100%;
@@ -1351,6 +1451,15 @@ def inject_custom_css() -> None:
             border-radius: 8px;
         }
         @media (max-width: 900px) {
+            .stock-header,
+            .chart-toolbar {
+                display: block;
+            }
+            .stock-price,
+            .stock-change {
+                margin-top: 0.32rem;
+                text-align: left;
+            }
             .page-header {
                 display: block;
             }
@@ -1404,6 +1513,30 @@ def render_page_header(ticker: str, history_years: int) -> None:
                 <h1>{ticker}</h1>
             </div>
             <div class="header-note">{history_years} yillik tarix · benchmark · rolling backtest</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_stock_header(
+    ticker: str,
+    latest_close: float,
+    daily_delta: float,
+    daily_delta_pct: float,
+) -> None:
+    """Aksiya nomi va joriy narxni ixcham ko'rsatadi."""
+    change_class = "down" if daily_delta < 0 else ""
+    st.markdown(
+        f"""
+        <div class="stock-header">
+            <div class="stock-name">{ticker}</div>
+            <div>
+                <div class="stock-price">${latest_close:,.2f}</div>
+                <div class="stock-change {change_class}">
+                    {daily_delta:+.2f} ({daily_delta_pct:+.2f}%)
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1630,6 +1763,13 @@ def format_model_label(model_name: str) -> str:
     }.get(model_name, model_name)
 
 
+def visible_models_for_choice(choice: str) -> list[str]:
+    """Model tanlovini chartga kerakli model ro'yxatiga aylantiradi."""
+    if choice == "Barcha modellar":
+        return ALL_FORECAST_NAMES
+    return [choice]
+
+
 def main() -> None:
     """Streamlit interfeysini ishga tushiradi."""
     st.set_page_config(
@@ -1702,8 +1842,6 @@ def main() -> None:
             rolling_details = evaluate_rolling_horizon_backtests(data, forecast_months)
             rolling_summary = summarize_rolling_horizon_backtests(rolling_details)
 
-    render_page_header(ticker, history_years)
-
     if demo_mode:
         st.warning(
             "Demo data ishlatilmoqda: internet yoki Yahoo Finance ma'lumotlari mavjud emas."
@@ -1722,32 +1860,6 @@ def main() -> None:
     daily_delta = latest_close - previous_close
     daily_delta_pct = (daily_delta / previous_close) * 100
     best_future_model_name = str(rolling_summary.iloc[0]["Model"])
-    best_future_skill = float(rolling_summary.iloc[0]["Skill vs Benchmark"])
-    best_future_benchmark_wins = int(rolling_summary.iloc[0]["Benchmark Wins"])
-    best_future_wins = int(rolling_summary.iloc[0]["Wins"])
-    best_forecast_end = float(future_forecasts[best_future_model_name].iloc[-1])
-    forecast_anchor = float(data["Close"].iloc[-1])
-    forecast_delta = best_forecast_end - forecast_anchor
-    trailing_year = data.tail(252)
-    trailing_low = float(trailing_year["Low"].min())
-    trailing_high = float(trailing_year["High"].max())
-    recent_volatility = float(
-        data["Close"].pct_change().tail(63).std() * np.sqrt(252) * 100
-    )
-    trailing_year_return = (
-        (float(data["Close"].iloc[-1]) / float(data["Close"].iloc[-252])) - 1
-    ) * 100
-    ema_20 = float(data["Close"].ewm(span=20, adjust=False).mean().iloc[-1])
-    ema_50 = float(data["Close"].ewm(span=50, adjust=False).mean().iloc[-1])
-    forecast_end_values = future_forecasts[MODEL_NAMES].iloc[-1]
-    forecast_up_count = int((forecast_end_values > forecast_anchor).sum())
-    forecast_range_low = float(forecast_end_values.min())
-    forecast_range_high = float(forecast_end_values.max())
-    forecast_spread_pct = (
-        ((forecast_range_high - forecast_range_low) / forecast_anchor) * 100
-        if forecast_anchor
-        else 0.0
-    )
 
     display_table = metrics_table.copy()
     display_table["Model"] = display_table["Model"].map(format_model_label)
@@ -1760,210 +1872,75 @@ def main() -> None:
     for column in ["MAE", "RMSE", "MAPE", "R² Score"]:
         display_table[column] = display_table[column].map(lambda value: round(value, 4))
 
-    if best_future_model_name == BASELINE_NAME:
-        st.info(
-            "Rolling backtest natijasida oddiy benchmark eng yaxshi chiqdi. "
-            "Ilova buni yashirmaydi: murakkab model benchmarkdan ustun bo'lmasa, "
-            "eng ishonchli signal sifatida benchmark ko'rsatiladi."
-        )
+    render_stock_header(
+        ticker=ticker,
+        latest_close=latest_close,
+        daily_delta=daily_delta,
+        daily_delta_pct=daily_delta_pct,
+    )
+    st.plotly_chart(create_price_chart(data, ticker), width="stretch")
 
-    overview_left, overview_right = st.columns([1.62, 0.88], gap="large")
-    with overview_left:
-        st.markdown('<div class="section-title">Narx harakati</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="section-note">Oxirgi 12 oy narxi, EMA 20 va EMA 50 bilan.</div>',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(create_price_chart(data, ticker), width="stretch")
-    with overview_right:
-        render_summary_panel(
-            latest_close=latest_close,
-            daily_delta=daily_delta,
-            daily_delta_pct=daily_delta_pct,
-            trailing_low=trailing_low,
-            trailing_high=trailing_high,
-            recent_volatility=recent_volatility,
-            best_future_model_name=best_future_model_name,
-            best_future_skill=best_future_skill,
-            forecast_months=forecast_months,
-            best_forecast_end=best_forecast_end,
-            forecast_delta=forecast_delta,
-        )
-
-    render_signal_strip(
-        trailing_year_return=trailing_year_return,
-        ema_20=ema_20,
-        ema_50=ema_50,
-        forecast_up_count=forecast_up_count,
-        total_models=len(MODEL_NAMES),
-        forecast_range_low=forecast_range_low,
-        forecast_range_high=forecast_range_high,
-        forecast_spread_pct=forecast_spread_pct,
-    )
-    render_confidence_panel(
-        best_future_skill=best_future_skill,
-        best_future_benchmark_wins=best_future_benchmark_wins,
-        best_future_wins=best_future_wins,
-        forecast_spread_pct=forecast_spread_pct,
-        forecast_up_count=forecast_up_count,
-        total_models=len(MODEL_NAMES),
-        recent_volatility=recent_volatility,
-    )
-    st.markdown('<div class="section-title">Model oqimi</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-note">Qaysi data bilan o‘qitildi, qayerda test qilindi va tanlov qanday qilindi.</div>',
-        unsafe_allow_html=True,
-    )
-    render_workflow_strip(train_data=train_data, test_data=test_data)
-
-    test_left, test_right = st.columns([1.62, 0.88], gap="large")
-    with test_left:
-        st.markdown(
-            '<div class="section-title">Model test natijalari</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<div class="section-note">Oxirgi 1 yillik holdout test: asosiy grafikda haqiqiy narx, benchmark va eng yaxshi natija ko‘rsatiladi.</div>',
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(
-            create_backtest_chart(
-                actual=test_data.loc[predictions[best_model_name].index, "Close"],
-                predictions=predictions,
-                best_model_name=best_model_name,
-            ),
-            width="stretch",
-        )
-    with test_right:
-        st.markdown('<div class="section-title">Test jadvali</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="section-note">MAE, RMSE, MAPE va R² bo‘yicha kunlik test natijasi.</div>',
-            unsafe_allow_html=True,
-        )
-        st.dataframe(display_table, width="stretch", hide_index=True)
-        st.markdown(
-            '<div class="table-note">RMSE kichikroq va R² kattaroq bo‘lsa, model testda yaxshiroq ishlagan.</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"""
-            <div class="selection-note">
-                Kunlik test yetakchisi: <strong>{format_model_label(best_model_name)}</strong><br>
-                Kelajak tanlovi: <strong>{format_model_label(best_future_model_name)}</strong><br>
-                Ular farq qilishi mumkin, chunki birinchisi kunlik holdout test, ikkinchisi esa kelajak ufqiga mos rolling backtest.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown('<div class="section-title">Prognoz va sifat</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-note">Asosiy tanlov bir martalik split emas, rolling backtest oynalari o‘rtachasi bo‘yicha qilinadi.</div>',
-        unsafe_allow_html=True,
-    )
-    horizon_display = rolling_summary[
-        [
-            "Model",
-            "RMSE",
-            "MAPE",
-            "Skill vs Benchmark",
-            "Benchmark Wins",
-            "Wins",
-        ]
-    ].copy()
-    horizon_display["Model"] = horizon_display["Model"].map(format_model_label)
-    horizon_display.insert(0, "Rank", range(1, len(horizon_display) + 1))
-    horizon_display = horizon_display.rename(
-        columns={
-            "Benchmark Wins": "Benchmarkdan yaxshi",
-            "Wins": "G'olib oynalar",
-        }
-    )
-    for column in ["RMSE", "MAPE", "Skill vs Benchmark"]:
-        horizon_display[column] = horizon_display[column].map(lambda value: round(value, 4))
-    analysis_left, analysis_right = st.columns([1.62, 0.88], gap="large")
-    with analysis_left:
+    forecast_header, forecast_control = st.columns([3.3, 1.0], gap="large")
+    with forecast_header:
         st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
         st.markdown(
-            '<div class="section-note">Benchmark, 4 ta model va 2 ta ansambl bir xil tarixiy featurelar asosida solishtiriladi.</div>',
+            '<div class="section-note">Prognoz charti: default holatda barcha modellar, xohlasangiz bitta modelni tanlang.</div>',
             unsafe_allow_html=True,
         )
-        st.plotly_chart(
-            create_multi_model_forecast_chart(data, future_forecasts, best_future_model_name),
-            width="stretch",
-        )
-    with analysis_right:
-        st.markdown('<div class="section-title">Model sifati</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="section-note">Rolling backtest bo‘yicha qisqa reyting.</div>',
-            unsafe_allow_html=True,
-        )
-        st.dataframe(horizon_display, width="stretch", hide_index=True)
-        st.markdown(
-            '<div class="table-note">RMSE qancha kichik bo‘lsa, prognoz shuncha yaxshi.</div>',
-            unsafe_allow_html=True,
-        )
-    with st.expander("Qo‘shimcha diagnostika", expanded=True):
-        with st.spinner("Qo'shimcha tekshiruvlar hisoblanmoqda..."):
-            horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
-                data,
-                forecast_months,
-            )
-            horizon_forecasts = add_derived_forecast_columns(horizon_forecasts)
-        st.markdown("#### Train/test kesimi")
-        left_column, right_column = st.columns(2)
-        with left_column:
-            st.plotly_chart(
-                create_train_test_chart(train_data, test_data),
-                width="stretch",
-            )
-        with right_column:
-            selected_actual = test_data.loc[predictions[best_model_name].index, "Close"]
-            st.plotly_chart(
-                create_prediction_chart(
-                    actual=selected_actual,
-                    predicted=predictions[best_model_name],
-                    model_name=best_model_name,
-                ),
-                width="stretch",
-            )
-        st.markdown("#### Barcha model chiziqlari")
-        st.caption(
-            "Bu ko'rinish chuqur taqqoslash uchun; asosiy sahifada esa faqat qaror uchun kerakli chiziqlar qoldirilgan."
-        )
-        st.plotly_chart(
-            create_full_backtest_chart(
-                actual=test_data.loc[predictions[best_model_name].index, "Close"],
-                predictions=predictions,
-                best_model_name=best_model_name,
+    with forecast_control:
+        forecast_model_choice = st.selectbox(
+            "Model tanlang",
+            options=["Barcha modellar", *ALL_FORECAST_NAMES],
+            index=0,
+            format_func=lambda value: (
+                value if value == "Barcha modellar" else format_model_label(value)
             ),
-            width="stretch",
+            key="forecast_model_choice",
         )
-        st.markdown("#### Oxirgi horizon-matched backtest")
-        st.caption(
-            "Bu chart kelajak forecast bilan bir xil ufqda oxirgi tarixiy oynani ko‘rsatadi."
+    st.plotly_chart(
+        create_multi_model_forecast_chart(
+            data=data,
+            future_forecasts=future_forecasts,
+            best_model_name=best_future_model_name,
+            visible_models=visible_models_for_choice(forecast_model_choice),
+        ),
+        width="stretch",
+    )
+
+    st.markdown('<div class="section-title">Model test natijalari</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-note">Barcha modellar bo‘yicha kunlik holdout test jadvali.</div>',
+        unsafe_allow_html=True,
+    )
+    st.dataframe(display_table, width="stretch", hide_index=True)
+
+    train_header, train_control = st.columns([3.3, 1.0], gap="large")
+    with train_header:
+        st.markdown('<div class="section-title">Train va test davri</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-note">Default holatda barcha model chiziqlari, tanlanganda esa faqat bitta model ko‘rinadi.</div>',
+            unsafe_allow_html=True,
         )
-        st.plotly_chart(
-            create_horizon_backtest_chart(horizon_actual, horizon_forecasts),
-            width="stretch",
+    with train_control:
+        train_model_choice = st.selectbox(
+            "Model tanlang",
+            options=["Barcha modellar", *ALL_FORECAST_NAMES],
+            index=0,
+            format_func=lambda value: (
+                value if value == "Barcha modellar" else format_model_label(value)
+            ),
+            key="train_model_choice",
         )
-        st.markdown("#### Klassik ML uchun walk-forward validation")
-        st.caption(
-            "Kunlik model sifati vaqt bo‘yicha qanchalik barqarorligini ko‘rsatadi."
-        )
-        if st.button("Walk-forward tekshiruvni hisoblash"):
-            walk_forward_table = run_walk_forward_validation(data)
-            walk_forward_display = walk_forward_table.copy()
-            walk_forward_display.insert(
-                0,
-                "Rank",
-                range(1, len(walk_forward_display) + 1),
-            )
-            for column in ["WalkForward_RMSE", "WalkForward_MAPE"]:
-                walk_forward_display[column] = walk_forward_display[column].map(
-                    lambda value: round(value, 4)
-                )
-            st.dataframe(walk_forward_display, width="stretch", hide_index=True)
+    st.plotly_chart(
+        create_train_test_model_chart(
+            train_data=train_data,
+            test_data=test_data,
+            predictions=predictions,
+            best_model_name=best_model_name,
+            visible_models=visible_models_for_choice(train_model_choice),
+        ),
+        width="stretch",
+    )
 
 if __name__ == "__main__":
     main()
