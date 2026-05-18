@@ -704,7 +704,7 @@ def create_price_chart(data: pd.DataFrame, ticker: str) -> go.Figure:
         )
     )
     styled = apply_chart_style(figure, f"{ticker} — real candlestick chart (oxirgi 12 oy)")
-    styled.update_layout(xaxis_rangeslider_visible=False)
+    styled.update_layout(title=f"{ticker} narxi", xaxis_rangeslider_visible=False)
     return styled
 
 
@@ -873,6 +873,7 @@ def create_multi_model_forecast_chart(
     )
     for model_name in ALL_FORECAST_NAMES:
         is_best = model_name == best_model_name
+        is_baseline = model_name == BASELINE_NAME
         figure.add_trace(
             go.Scatter(
                 x=future_forecasts.index,
@@ -881,19 +882,20 @@ def create_multi_model_forecast_chart(
                 name=f"{model_name}{' ★' if is_best else ''}",
                 line=dict(
                     color=colors[model_name],
-                    width=3.2 if is_best else 2.2,
+                    width=3.2 if is_best else 2.2 if is_baseline else 1.7,
                     dash=(
                         "dot"
-                        if model_name == BASELINE_NAME and not is_best
+                        if is_baseline and not is_best
                         else "solid"
                         if is_best
                         else "dash"
                     ),
                 ),
+                opacity=1.0 if is_best or is_baseline else 0.72,
                 marker=dict(size=5),
             )
         )
-    return apply_chart_style(figure, "Kelajak prognozi: benchmark va 4 model")
+    return apply_chart_style(figure, "Kelajak prognozi")
 
 
 def inject_custom_css() -> None:
@@ -1027,6 +1029,15 @@ def inject_custom_css() -> None:
             font-size: 0.82rem;
             margin-top: 0.45rem;
         }
+        div[data-testid="stDataFrame"] {
+            font-size: 0.85rem;
+        }
+        div[data-testid="stDownloadButton"] button {
+            width: 100%;
+        }
+        details {
+            border-radius: 8px;
+        }
         @media (max-width: 900px) {
             .page-header {
                 display: block;
@@ -1127,6 +1138,17 @@ def render_summary_panel(
         """,
         unsafe_allow_html=True,
     )
+
+
+def format_model_label(model_name: str) -> str:
+    """UI jadvalida model nomlarini ixchamroq ko'rsatadi."""
+    return {
+        BASELINE_NAME: "Baseline",
+        "Ridge Regression": "Ridge",
+        "Random Forest Regressor": "Random Forest",
+        "Gradient Boosting Regressor": "Gradient Boosting",
+        "Extra Trees Regressor": "Extra Trees",
+    }.get(model_name, model_name)
 
 
 def main() -> None:
@@ -1255,6 +1277,7 @@ def main() -> None:
             "Skill vs Benchmark",
         ]
     ].copy()
+    horizon_display["Model"] = horizon_display["Model"].map(format_model_label)
     horizon_display.insert(0, "Rank", range(1, len(horizon_display) + 1))
     for column in ["RMSE", "MAPE", "Skill vs Benchmark"]:
         horizon_display[column] = horizon_display[column].map(lambda value: round(value, 4))
