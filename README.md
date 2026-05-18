@@ -1,14 +1,14 @@
 # Aksiya narxlarini prognoz qilish paneli
 
 Ushbu loyiha `Python` va `Streamlit` yordamida yaratilgan web ilova bo'lib,
-aksiya narxlarini 10 yillik tarix asosida tahlil qiladi va uzoq muddatli
-prognozlarni benchmark bilan solishtiradi.
+aksiya narxlarini tanlangan tarix chuqurligi asosida tahlil qiladi va uzoq
+muddatli prognozlarni benchmark bilan solishtiradi.
 
 ## Asosiy imkoniyatlar
 
 - Tayyor tickerlar: `AAPL`, `MSFT`, `NVDA`, `TSLA`, `AMZN`, `GOOGL`
 - Foydalanuvchi boshqa ticker ham kiritishi mumkin
-- Oxirgi `10 yillik` ma'lumot `Yahoo Finance` orqali olinadi
+- `2`, `5` yoki `10` yillik tarix tanlanadi; standart rejim `5 yil`
 - 4 ta o'rganadigan model ishlatiladi:
   - `Ridge Regression`
   - `Random Forest Regressor`

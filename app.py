@@ -39,8 +39,9 @@ MODEL_NAMES = [
 ]
 BASELINE_NAME = "Naive Baseline"
 ALL_FORECAST_NAMES = [BASELINE_NAME, *MODEL_NAMES]
-HISTORY_PERIOD = "10y"
-DEMO_PERIODS = 2520
+HISTORY_YEARS = (2, 5, 10)
+DEFAULT_HISTORY_YEARS = 5
+DEMO_PERIODS_PER_YEAR = 252
 TEST_YEARS = 1
 LAG_DAYS = 30
 ROLLING_WINDOWS = (5, 10, 20, 30)
@@ -66,8 +67,8 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def create_demo_data(ticker: str, periods: int = DEMO_PERIODS) -> pd.DataFrame:
-    """Internet bo'lmaganda ishlatish uchun 10 yillik sintetik data yaratadi."""
+def create_demo_data(ticker: str, periods: int) -> pd.DataFrame:
+    """Internet bo'lmaganda ishlatish uchun sintetik data yaratadi."""
     end_date = pd.Timestamp.today().normalize()
     dates = pd.bdate_range(end=end_date, periods=periods)
 
@@ -123,13 +124,13 @@ def normalize_stock_data(raw_data: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_stock_data(ticker: str) -> tuple[pd.DataFrame, bool]:
-    """Oxirgi 10 yillik data yuklaydi, bo'lmasa demo data qaytaradi."""
+def load_stock_data(ticker: str, history_years: int) -> tuple[pd.DataFrame, bool]:
+    """Tanlangan tarix chuqurligidagi data yuklaydi, bo'lmasa demo data qaytaradi."""
     try:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             raw_data = yf.download(
                 tickers=ticker,
-                period=HISTORY_PERIOD,
+                period=f"{history_years}y",
                 interval="1d",
                 auto_adjust=False,
                 progress=False,
@@ -142,7 +143,7 @@ def load_stock_data(ticker: str) -> tuple[pd.DataFrame, bool]:
             raise ValueError("Prognoz uchun yetarli ma'lumot yo'q.")
         return data, False
     except Exception:
-        return create_demo_data(ticker), True
+        return create_demo_data(ticker, history_years * DEMO_PERIODS_PER_YEAR), True
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -178,7 +179,7 @@ def load_live_quote(ticker: str) -> dict[str, float | str | bool]:
 
 
 def split_train_test(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Birinchi 9 yil train, oxirgi 1 yil test sifatida ajratiladi."""
+    """Tarixning oxirgi 1 yilini test, undan oldingisini train sifatida ajratadi."""
     cutoff_date = data.index.max() - pd.DateOffset(years=TEST_YEARS)
     train_data = data[data.index < cutoff_date].copy()
     test_data = data[data.index >= cutoff_date].copy()
@@ -1252,7 +1253,7 @@ def inject_custom_css() -> None:
     )
 
 
-def render_page_header(ticker: str) -> None:
+def render_page_header(ticker: str, history_years: int) -> None:
     """Sahifa tepasidagi ishchi sarlavhani chiqaradi."""
     st.markdown(
         f"""
@@ -1261,7 +1262,7 @@ def render_page_header(ticker: str) -> None:
                 <div class="eyebrow">Aksiya prognoz paneli</div>
                 <h1>{ticker}</h1>
             </div>
-            <div class="header-note">10 yillik tarix · benchmark · rolling backtest</div>
+            <div class="header-note">{history_years} yillik tarix · benchmark · rolling backtest</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1496,7 +1497,7 @@ def main() -> None:
     inject_custom_css()
 
     st.markdown('<div class="control-panel">', unsafe_allow_html=True)
-    control_columns = st.columns([1.15, 1.15, 0.9])
+    control_columns = st.columns([1.0, 1.0, 0.95, 0.9])
     with control_columns[0]:
         ticker_choice = st.selectbox(
             "Aksiya tanlang",
@@ -1510,6 +1511,19 @@ def main() -> None:
         else:
             st.text_input("Ticker", value=ticker_choice, disabled=True)
     with control_columns[2]:
+        history_years = st.selectbox(
+            "Tarix chuqurligi",
+            options=HISTORY_YEARS,
+            index=HISTORY_YEARS.index(DEFAULT_HISTORY_YEARS),
+            format_func=lambda value: (
+                "2 yil - tez"
+                if value == 2
+                else "5 yil - muvozanat"
+                if value == 5
+                else "10 yil - to'liq"
+            ),
+        )
+    with control_columns[3]:
         forecast_months = st.radio(
             "Prognoz muddati",
             options=[3, 6, 12],
@@ -1522,8 +1536,8 @@ def main() -> None:
     ticker = custom_ticker.strip().upper() if ticker_choice == "Boshqa" else ticker_choice
     ticker = ticker or "AAPL"
 
-    with st.spinner("Real narx, 10 yillik data va modellar tayyorlanmoqda..."):
-        data, demo_mode = load_stock_data(ticker)
+    with st.spinner("Real narx, tarixiy data va modellar tayyorlanmoqda..."):
+        data, demo_mode = load_stock_data(ticker, history_years)
         live_quote = load_live_quote(ticker)
         train_data, test_data, metrics_table, predictions, best_model_name = (
             run_model_evaluation(data)
@@ -1534,7 +1548,7 @@ def main() -> None:
             forecast_months,
         )
 
-    render_page_header(ticker)
+    render_page_header(ticker, history_years)
 
     if demo_mode:
         st.warning(
