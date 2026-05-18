@@ -49,7 +49,7 @@ MOMENTUM_PERIODS = (5, 10, 20)
 EMA_SPANS = (5, 10, 20, 30)
 WEEKLY_RETURN_LAGS = 26
 WEEKLY_WINDOWS = (4, 8, 13, 26)
-ROLLING_BACKTEST_ORIGINS = 3
+ROLLING_BACKTEST_ORIGINS = 2
 FEATURE_COLUMNS = [
     *[f"lag_{lag}" for lag in range(1, LAG_DAYS + 1)],
     *[f"rolling_mean_{window}" for window in ROLLING_WINDOWS],
@@ -232,19 +232,19 @@ def get_sklearn_model_builders() -> dict[str, Callable[[], object]]:
             [("scaler", StandardScaler()), ("model", Ridge(alpha=2.0))]
         ),
         "Random Forest Regressor": lambda: RandomForestRegressor(
-            n_estimators=140,
+            n_estimators=80,
             min_samples_leaf=4,
             random_state=42,
             n_jobs=1,
         ),
         "Gradient Boosting Regressor": lambda: GradientBoostingRegressor(
-            n_estimators=150,
+            n_estimators=90,
             learning_rate=0.03,
             max_depth=2,
             random_state=42,
         ),
         "Extra Trees Regressor": lambda: ExtraTreesRegressor(
-            n_estimators=160,
+            n_estimators=100,
             min_samples_leaf=4,
             random_state=42,
             n_jobs=1,
@@ -445,7 +445,7 @@ def build_weekly_sklearn_model(model_name: str) -> object:
         )
     if model_name == "Random Forest Regressor":
         return RandomForestRegressor(
-            n_estimators=140,
+            n_estimators=80,
             min_samples_leaf=4,
             random_state=42,
             n_jobs=1,
@@ -453,7 +453,7 @@ def build_weekly_sklearn_model(model_name: str) -> object:
     if model_name == "Gradient Boosting Regressor":
         return MultiOutputRegressor(
             GradientBoostingRegressor(
-                n_estimators=150,
+                n_estimators=90,
                 learning_rate=0.03,
                 max_depth=2,
                 random_state=42,
@@ -461,7 +461,7 @@ def build_weekly_sklearn_model(model_name: str) -> object:
         )
     if model_name == "Extra Trees Regressor":
         return ExtraTreesRegressor(
-            n_estimators=160,
+            n_estimators=100,
             min_samples_leaf=4,
             random_state=42,
             n_jobs=1,
@@ -1190,15 +1190,8 @@ def main() -> None:
     with st.spinner("Real narx, 10 yillik data va modellar tayyorlanmoqda..."):
         data, demo_mode = load_stock_data(ticker)
         live_quote = load_live_quote(ticker)
-        train_data, test_data, metrics_table, predictions, best_model_name = (
-            run_model_evaluation(data)
-        )
         future_forecasts = run_all_future_forecasts(data, forecast_months)
         rolling_summary, _rolling_details = run_cached_rolling_horizon_backtests(
-            data,
-            forecast_months,
-        )
-        horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
             data,
             forecast_months,
         )
@@ -1311,6 +1304,14 @@ def main() -> None:
         )
 
     with st.expander("Qo‘shimcha tekshiruvlar"):
+        with st.spinner("Qo'shimcha tekshiruvlar hisoblanmoqda..."):
+            train_data, test_data, metrics_table, predictions, best_model_name = (
+                run_model_evaluation(data)
+            )
+            horizon_actual, horizon_forecasts = run_cached_horizon_backtest(
+                data,
+                forecast_months,
+            )
         st.markdown("#### Oxirgi 1 yillik kunlik holdout test")
         display_table = metrics_table.copy()
         display_table.insert(0, "Rank", range(1, len(display_table) + 1))
