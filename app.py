@@ -42,8 +42,8 @@ ENSEMBLE_NAME = "Mean Ensemble"
 BLEND_NAME = "Conservative Blend"
 DERIVED_FORECAST_NAMES = [ENSEMBLE_NAME, BLEND_NAME]
 ALL_FORECAST_NAMES = [BASELINE_NAME, *MODEL_NAMES, *DERIVED_FORECAST_NAMES]
-HISTORY_YEARS = (2, 5, 10)
-DEFAULT_HISTORY_YEARS = 5
+FIXED_HISTORY_YEARS = 5
+FIXED_FORECAST_MONTHS = 3
 DEMO_PERIODS_PER_YEAR = 252
 TEST_YEARS = 1
 LAG_DAYS = 30
@@ -737,13 +737,25 @@ def apply_chart_style(figure: go.Figure, title: str) -> go.Figure:
         title=title,
         template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(255,255,255,0.96)",
-        margin=dict(l=20, r=20, t=60, b=20),
+        plot_bgcolor="#FFFFFF",
+        margin=dict(l=20, r=20, t=58, b=22),
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            font=dict(size=11, color="#334155"),
+        ),
+        title_font=dict(size=18, color="#0F172A"),
+        font=dict(color="#334155"),
     )
-    figure.update_xaxes(showgrid=False)
-    figure.update_yaxes(gridcolor="rgba(148,163,184,0.24)")
+    figure.update_xaxes(showgrid=False, zeroline=False)
+    figure.update_yaxes(
+        gridcolor="rgba(148,163,184,0.18)",
+        zeroline=False,
+    )
     return figure
 
 
@@ -1153,6 +1165,8 @@ def inject_custom_css() -> None:
             --surface: #F6F8FB;
             --accent: #0F766E;
             --soft: #EEF5F6;
+            --shadow: 0 18px 38px rgba(15, 23, 42, 0.08);
+            --shadow-soft: 0 10px 24px rgba(15, 23, 42, 0.06);
         }
         [data-testid="stAppViewContainer"] {
             background: var(--surface);
@@ -1192,7 +1206,20 @@ def inject_custom_css() -> None:
             border-radius: 8px;
             background: var(--card);
             border: 1px solid var(--border);
+            box-shadow: var(--shadow-soft);
             margin-bottom: 1.15rem;
+        }
+        .control-panel [data-testid="stHorizontalBlock"] {
+            align-items: end;
+        }
+        .control-panel [data-testid="stTextInput"] input,
+        .control-panel [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+            border-radius: 8px;
+            border-color: #CBD5E1;
+            background: #F8FAFC;
+        }
+        .control-panel [data-testid="stTextInput"] input:disabled {
+            color: #64748B;
         }
         .section-title {
             color: var(--ink);
@@ -1246,6 +1273,7 @@ def inject_custom_css() -> None:
             border-bottom: 0;
             border-radius: 8px 8px 0 0;
             background: var(--card);
+            box-shadow: var(--shadow-soft);
         }
         .section-toolbar-copy {
             min-width: 0;
@@ -1267,6 +1295,7 @@ def inject_custom_css() -> None:
             border: 1px solid var(--border);
             border-radius: 0 0 8px 8px;
             padding: 0.1rem 0.15rem 0.15rem;
+            box-shadow: var(--shadow);
         }
         .stock-chart-shell + div[data-testid="stPlotlyChart"] {
             border-radius: 8px;
@@ -1277,6 +1306,7 @@ def inject_custom_css() -> None:
             border: 1px solid var(--border);
             border-radius: 8px;
             background: var(--card);
+            box-shadow: var(--shadow-soft);
         }
         .summary-panel {
             min-height: 100%;
@@ -1825,7 +1855,7 @@ def main() -> None:
     inject_custom_css()
 
     st.markdown('<div class="control-panel">', unsafe_allow_html=True)
-    control_columns = st.columns([1.0, 1.0, 0.95, 0.9])
+    control_columns = st.columns([1.0, 1.0])
     with control_columns[0]:
         ticker_choice = st.selectbox(
             "Aksiya tanlang",
@@ -1838,31 +1868,12 @@ def main() -> None:
             custom_ticker = st.text_input("Ticker kiriting", value="META")
         else:
             st.text_input("Ticker", value=ticker_choice, disabled=True)
-    with control_columns[2]:
-        history_years = st.selectbox(
-            "Tarix chuqurligi",
-            options=HISTORY_YEARS,
-            index=HISTORY_YEARS.index(DEFAULT_HISTORY_YEARS),
-            format_func=lambda value: (
-                "2 yil - tez"
-                if value == 2
-                else "5 yil - muvozanat"
-                if value == 5
-                else "10 yil - to'liq"
-            ),
-        )
-    with control_columns[3]:
-        forecast_months = st.radio(
-            "Prognoz muddati",
-            options=[3, 6, 12],
-            index=0,
-            horizontal=True,
-            format_func=lambda value: f"{value} oy",
-        )
     st.markdown("</div>", unsafe_allow_html=True)
 
     ticker = custom_ticker.strip().upper() if ticker_choice == "Boshqa" else ticker_choice
     ticker = ticker or "AAPL"
+    history_years = FIXED_HISTORY_YEARS
+    forecast_months = FIXED_FORECAST_MONTHS
 
     with st.spinner("Real narx, tarixiy data va modellar tayyorlanmoqda..."):
         data, demo_mode = load_stock_data(ticker, history_years)
