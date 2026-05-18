@@ -14,6 +14,7 @@ os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 import yfinance as yf
 from sklearn.ensemble import (
@@ -126,9 +127,49 @@ def normalize_stock_data(raw_data: pd.DataFrame) -> pd.DataFrame:
     return data.sort_index()
 
 
+def ensure_enough_history(data: pd.DataFrame) -> pd.DataFrame:
+    """Prognoz uchun yetarli tarix borligini tekshiradi."""
+    if len(data) < 500:
+        raise ValueError("Prognoz uchun yetarli ma'lumot yo'q.")
+    return data
+
+
+def download_yahoo_chart_data(ticker: str, history_years: int) -> pd.DataFrame:
+    """yfinance ishlamasa, Yahoo chart endpointidan tarixiy data oladi."""
+    response = requests.get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+        params={
+            "range": f"{history_years}y",
+            "interval": "1d",
+            "includePrePost": "false",
+            "events": "div,splits",
+        },
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    result = payload["chart"]["result"][0]
+    quote = result["indicators"]["quote"][0]
+    dates = pd.to_datetime(result["timestamp"], unit="s")
+    raw_data = pd.DataFrame(
+        {
+            "Open": quote["open"],
+            "High": quote["high"],
+            "Low": quote["low"],
+            "Close": quote["close"],
+            "Volume": quote["volume"],
+        },
+        index=dates,
+    )
+    return normalize_stock_data(raw_data)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_stock_data(ticker: str, history_years: int) -> tuple[pd.DataFrame, bool]:
-    """Tanlangan tarix chuqurligidagi data yuklaydi, bo'lmasa demo data qaytaradi."""
+def load_real_stock_data(ticker: str, history_years: int) -> pd.DataFrame:
+    """Faqat real datani yuklaydi va cache qiladi."""
+    errors: list[str] = []
+
     try:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             raw_data = yf.download(
@@ -138,14 +179,38 @@ def load_stock_data(ticker: str, history_years: int) -> tuple[pd.DataFrame, bool
                 auto_adjust=False,
                 progress=False,
                 threads=False,
-                timeout=10,
+                timeout=30,
             )
+        return ensure_enough_history(normalize_stock_data(raw_data))
+    except Exception as error:
+        errors.append(f"yf.download: {error}")
 
-        data = normalize_stock_data(raw_data)
-        if len(data) < 500:
-            raise ValueError("Prognoz uchun yetarli ma'lumot yo'q.")
-        return data, False
-    except Exception:
+    try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            raw_data = yf.Ticker(ticker).history(
+                period=f"{history_years}y",
+                interval="1d",
+                auto_adjust=False,
+                timeout=30,
+            )
+        return ensure_enough_history(normalize_stock_data(raw_data))
+    except Exception as error:
+        errors.append(f"Ticker.history: {error}")
+
+    try:
+        return ensure_enough_history(download_yahoo_chart_data(ticker, history_years))
+    except Exception as error:
+        errors.append(f"Yahoo chart API: {error}")
+
+    raise RuntimeError(" | ".join(errors))
+
+
+def load_stock_data(ticker: str, history_years: int) -> tuple[pd.DataFrame, bool]:
+    """Real data oladi; vaqtinchalik xatoda cache'lanmagan demo data qaytaradi."""
+    try:
+        return load_real_stock_data(ticker, history_years), False
+    except Exception as error:
+        logging.warning("Real stock data unavailable for %s: %s", ticker, error)
         return create_demo_data(ticker, history_years * DEMO_PERIODS_PER_YEAR), True
 
 
