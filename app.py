@@ -852,7 +852,62 @@ def create_backtest_chart(
     predictions: dict[str, pd.Series],
     best_model_name: str,
 ) -> go.Figure:
-    """Oxirgi 1 yillik testda benchmark, modellar va ansambllarni ko'rsatadi."""
+    """Oxirgi 1 yillik testni qaror uchun ixcham ko'rinishda ko'rsatadi."""
+    colors = {
+        BASELINE_NAME: "#64748B",
+        "Ridge Regression": "#0F766E",
+        "Random Forest Regressor": "#2563EB",
+        "Gradient Boosting Regressor": "#F97316",
+        "Extra Trees Regressor": "#7C3AED",
+        ENSEMBLE_NAME: "#DB2777",
+        BLEND_NAME: "#0891B2",
+    }
+    figure = go.Figure()
+    figure.add_trace(
+        go.Scatter(
+            x=actual.index,
+            y=actual,
+            mode="lines",
+            name="Haqiqiy narx",
+            line=dict(color="#0F172A", width=3),
+        )
+    )
+    highlighted_models = [BASELINE_NAME]
+    if best_model_name != BASELINE_NAME:
+        highlighted_models.append(best_model_name)
+
+    for model_name in highlighted_models:
+        is_best = model_name == best_model_name
+        is_baseline = model_name == BASELINE_NAME
+        figure.add_trace(
+            go.Scatter(
+                x=predictions[model_name].index,
+                y=predictions[model_name],
+                mode="lines",
+                name=f"{format_model_label(model_name)}{' ★' if is_best else ''}",
+                line=dict(
+                    color=colors[model_name],
+                    width=3.0 if is_best else 2.2 if is_baseline else 1.7,
+                    dash=(
+                        "dot"
+                        if is_baseline and not is_best
+                        else "solid"
+                        if is_best
+                        else "dash"
+                    ),
+                ),
+                opacity=1.0 if is_best or is_baseline else 0.7,
+            )
+        )
+    return apply_chart_style(figure, "Kunlik backtest: haqiqiy narx, benchmark va eng yaxshi model")
+
+
+def create_full_backtest_chart(
+    actual: pd.Series,
+    predictions: dict[str, pd.Series],
+    best_model_name: str,
+) -> go.Figure:
+    """Qo'shimcha diagnostika uchun barcha model chiziqlarini ko'rsatadi."""
     colors = {
         BASELINE_NAME: "#64748B",
         "Ridge Regression": "#0F766E",
@@ -883,7 +938,7 @@ def create_backtest_chart(
                 name=f"{format_model_label(model_name)}{' ★' if is_best else ''}",
                 line=dict(
                     color=colors[model_name],
-                    width=3.0 if is_best else 2.2 if is_baseline else 1.7,
+                    width=3.0 if is_best else 2.2 if is_baseline else 1.6,
                     dash=(
                         "dot"
                         if is_baseline and not is_best
@@ -892,10 +947,10 @@ def create_backtest_chart(
                         else "dash"
                     ),
                 ),
-                opacity=1.0 if is_best or is_baseline else 0.7,
+                opacity=1.0 if is_best or is_baseline else 0.62,
             )
         )
-    return apply_chart_style(figure, "Kunlik backtest: haqiqiy narx, benchmark va modellar")
+    return apply_chart_style(figure, "Barcha kunlik backtest chiziqlari")
 
 
 def create_horizon_backtest_chart(
@@ -1768,7 +1823,7 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         st.markdown(
-            '<div class="section-note">Oxirgi 1 yillik holdout test: benchmark, 4 model va 2 ansambl bitta grafikda.</div>',
+            '<div class="section-note">Oxirgi 1 yillik holdout test: asosiy grafikda haqiqiy narx, benchmark va eng yaxshi natija ko‘rsatiladi.</div>',
             unsafe_allow_html=True,
         )
         st.plotly_chart(
@@ -1885,6 +1940,18 @@ def main() -> None:
                 ),
                 width="stretch",
             )
+        st.markdown("#### Barcha model chiziqlari")
+        st.caption(
+            "Bu ko'rinish chuqur taqqoslash uchun; asosiy sahifada esa faqat qaror uchun kerakli chiziqlar qoldirilgan."
+        )
+        st.plotly_chart(
+            create_full_backtest_chart(
+                actual=test_data.loc[predictions[best_model_name].index, "Close"],
+                predictions=predictions,
+                best_model_name=best_model_name,
+            ),
+            width="stretch",
+        )
         st.markdown("#### Oxirgi horizon-matched backtest")
         st.caption(
             "Bu chart kelajak forecast bilan bir xil ufqda oxirgi tarixiy oynani ko‘rsatadi."
