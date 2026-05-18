@@ -766,27 +766,6 @@ def create_prediction_chart(
     )
 
 
-def create_model_comparison_chart(metrics_table: pd.DataFrame) -> go.Figure:
-    """RMSE bo'yicha modellar reytingini beradi."""
-    chart_data = metrics_table.sort_values("RMSE", ascending=True)
-    figure = go.Figure()
-    figure.add_trace(
-        go.Bar(
-            x=chart_data["RMSE"],
-            y=chart_data["Model"],
-            orientation="h",
-            marker=dict(
-                color=["#7C3AED", "#2563EB", "#0F766E", "#F97316"],
-                line=dict(width=0),
-            ),
-            text=chart_data["RMSE"].map(lambda value: f"{value:.2f}"),
-            textposition="outside",
-        )
-    )
-    figure.update_yaxes(autorange="reversed")
-    return apply_chart_style(figure, "RMSE bo'yicha modellar reytingi")
-
-
 def create_backtest_chart(
     actual: pd.Series,
     predictions: dict[str, pd.Series],
@@ -866,18 +845,6 @@ def create_horizon_backtest_chart(
         figure,
         "Horizon-matched backtest: future usuli tarixda qanday ishlagan?",
     )
-
-
-def create_horizon_metrics_table(
-    actual: pd.Series,
-    forecasts: pd.DataFrame,
-) -> pd.DataFrame:
-    """Future usuliga mos backtest metrikalarini hisoblaydi."""
-    rows = []
-    for model_name in ALL_FORECAST_NAMES:
-        metrics = calculate_metrics(actual, forecasts[model_name])
-        rows.append({"Model": model_name, **metrics})
-    return pd.DataFrame(rows).sort_values(["RMSE", "MAE"]).reset_index(drop=True)
 
 
 def create_multi_model_forecast_chart(
