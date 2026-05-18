@@ -769,6 +769,7 @@ def create_prediction_chart(
 def create_backtest_chart(
     actual: pd.Series,
     predictions: dict[str, pd.Series],
+    best_model_name: str,
 ) -> go.Figure:
     """Oxirgi 1 yillik test davrida benchmark va modellarni ko'rsatadi."""
     colors = {
@@ -789,17 +790,26 @@ def create_backtest_chart(
         )
     )
     for model_name in ALL_FORECAST_NAMES:
+        is_best = model_name == best_model_name
+        is_baseline = model_name == BASELINE_NAME
         figure.add_trace(
             go.Scatter(
                 x=predictions[model_name].index,
                 y=predictions[model_name],
                 mode="lines",
-                name=model_name,
+                name=f"{model_name}{' ★' if is_best else ''}",
                 line=dict(
                     color=colors[model_name],
-                    width=2.2 if model_name == BASELINE_NAME else 1.9,
-                    dash="dot" if model_name == BASELINE_NAME else "dash",
+                    width=3.0 if is_best else 2.2 if is_baseline else 1.7,
+                    dash=(
+                        "dot"
+                        if is_baseline and not is_best
+                        else "solid"
+                        if is_best
+                        else "dash"
+                    ),
                 ),
+                opacity=1.0 if is_best or is_baseline else 0.7,
             )
         )
     return apply_chart_style(figure, "Kunlik backtest: haqiqiy narx, benchmark va modellar")
@@ -869,6 +879,32 @@ def create_multi_model_forecast_chart(
             mode="lines",
             name="Tarixiy narx",
             line=dict(color="#2563EB", width=2.4),
+        )
+    )
+    model_band = future_forecasts[MODEL_NAMES]
+    model_low = model_band.min(axis=1)
+    model_high = model_band.max(axis=1)
+    figure.add_trace(
+        go.Scatter(
+            x=model_low.index,
+            y=model_low,
+            mode="lines",
+            name="Model diapazoni",
+            line=dict(color="rgba(15,118,110,0)", width=0),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=model_high.index,
+            y=model_high,
+            mode="lines",
+            name="Model diapazoni",
+            fill="tonexty",
+            fillcolor="rgba(15,118,110,0.11)",
+            line=dict(color="rgba(15,118,110,0)", width=0),
+            hoverinfo="skip",
         )
     )
     for model_name in ALL_FORECAST_NAMES:
@@ -1057,6 +1093,46 @@ def inject_custom_css() -> None:
             font-size: 0.78rem;
             margin-top: 0.18rem;
         }
+        .workflow-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.8rem;
+            margin: 0.2rem 0 1rem;
+        }
+        .workflow-card {
+            padding: 0.8rem 0.9rem;
+            border-radius: 8px;
+            background: #FBFCFD;
+            border: 1px solid var(--border);
+        }
+        .workflow-step {
+            color: var(--accent);
+            font-size: 0.74rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-bottom: 0.18rem;
+        }
+        .workflow-value {
+            color: var(--ink);
+            font-size: 0.96rem;
+            font-weight: 700;
+            line-height: 1.35;
+        }
+        .workflow-note {
+            color: var(--muted);
+            font-size: 0.78rem;
+            margin-top: 0.18rem;
+        }
+        .selection-note {
+            padding: 0.8rem 0.9rem;
+            margin-top: 0.7rem;
+            border-radius: 8px;
+            background: #F8FAFC;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 0.84rem;
+            line-height: 1.45;
+        }
         div[data-testid="stDataFrame"] {
             font-size: 0.85rem;
         }
@@ -1089,6 +1165,9 @@ def inject_custom_css() -> None:
                 min-width: 0;
             }
             .signal-strip {
+                grid-template-columns: 1fr;
+            }
+            .workflow-strip {
                 grid-template-columns: 1fr;
             }
         }
@@ -1155,7 +1234,7 @@ def render_summary_panel(
                 </div>
                 <div>
                     <div class="summary-label">Tanlangan prognoz</div>
-                    <div class="summary-value">{best_future_model_name}</div>
+                    <div class="summary-value">{format_model_label(best_future_model_name)}</div>
                 </div>
                 <div>
                     <div class="summary-label">{forecast_months} oy yakuni</div>
@@ -1206,6 +1285,40 @@ def render_signal_strip(
                 <div class="signal-card-label">Prognoz oralig'i</div>
                 <div class="signal-card-value">${forecast_range_low:,.2f} - ${forecast_range_high:,.2f}</div>
                 <div class="signal-card-note">Tarqoqlik {forecast_spread_pct:.1f}%</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_workflow_strip(
+    train_data: pd.DataFrame,
+    test_data: pd.DataFrame,
+) -> None:
+    """Model oqimini foydalanuvchiga yashirmasdan ko'rsatadi."""
+    st.markdown(
+        f"""
+        <div class="workflow-strip">
+            <div class="workflow-card">
+                <div class="workflow-step">1. O'qitish</div>
+                <div class="workflow-value">{len(train_data):,} qator</div>
+                <div class="workflow-note">{train_data.index.min():%Y-%m-%d} - {train_data.index.max():%Y-%m-%d}</div>
+            </div>
+            <div class="workflow-card">
+                <div class="workflow-step">2. Test</div>
+                <div class="workflow-value">{len(test_data):,} qator</div>
+                <div class="workflow-note">{test_data.index.min():%Y-%m-%d} - {test_data.index.max():%Y-%m-%d}</div>
+            </div>
+            <div class="workflow-card">
+                <div class="workflow-step">3. Feature</div>
+                <div class="workflow-value">{len(FEATURE_COLUMNS)} ta signal</div>
+                <div class="workflow-note">Lag, rolling, return, momentum, EMA</div>
+            </div>
+            <div class="workflow-card">
+                <div class="workflow-step">4. Tanlov</div>
+                <div class="workflow-value">{ROLLING_BACKTEST_ORIGINS} oynali backtest</div>
+                <div class="workflow-note">Benchmark bilan tekshiriladi</div>
             </div>
         </div>
         """,
@@ -1368,6 +1481,12 @@ def main() -> None:
         forecast_range_high=forecast_range_high,
         forecast_spread_pct=forecast_spread_pct,
     )
+    st.markdown('<div class="section-title">Model oqimi</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-note">Qaysi data bilan o‘qitildi, qayerda test qilindi va tanlov qanday qilindi.</div>',
+        unsafe_allow_html=True,
+    )
+    render_workflow_strip(train_data=train_data, test_data=test_data)
 
     test_left, test_right = st.columns([1.62, 0.88], gap="large")
     with test_left:
@@ -1383,6 +1502,7 @@ def main() -> None:
             create_backtest_chart(
                 actual=test_data.loc[predictions[best_model_name].index, "Close"],
                 predictions=predictions,
+                best_model_name=best_model_name,
             ),
             width="stretch",
         )
@@ -1395,6 +1515,16 @@ def main() -> None:
         st.dataframe(display_table, width="stretch", hide_index=True)
         st.markdown(
             '<div class="table-note">RMSE kichikroq va R² kattaroq bo‘lsa, model testda yaxshiroq ishlagan.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"""
+            <div class="selection-note">
+                Kunlik test yetakchisi: <strong>{format_model_label(best_model_name)}</strong><br>
+                Kelajak tanlovi: <strong>{format_model_label(best_future_model_name)}</strong><br>
+                Ular farq qilishi mumkin, chunki birinchisi kunlik holdout test, ikkinchisi esa kelajak ufqiga mos rolling backtest.
+            </div>
+            """,
             unsafe_allow_html=True,
         )
         st.download_button(
