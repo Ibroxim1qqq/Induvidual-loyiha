@@ -1264,7 +1264,7 @@ def inject_custom_css() -> None:
         }
         .section-toolbar {
             display: flex;
-            align-items: flex-end;
+            align-items: center;
             justify-content: space-between;
             gap: 1rem;
             padding: 0.9rem 1rem 0.65rem;
@@ -1284,8 +1284,7 @@ def inject_custom_css() -> None:
             background: #FBFCFD;
         }
         .toolbar-control label {
-            font-size: 0.78rem;
-            color: var(--muted);
+            display: none;
         }
         .chart-shell + div[data-testid="stPlotlyChart"] {
             margin-top: 0;
@@ -1941,11 +1940,7 @@ def main() -> None:
     forecast_header, forecast_control = st.columns([3.3, 1.0], gap="large")
     with forecast_header:
         st.markdown('<div class="section-toolbar-copy">', unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Kelajak prognozi</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="section-note">Prognoz charti: default holatda barcha modellar, xohlasangiz bitta modelni tanlang.</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="section-title">Bashorat</div>', unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
     with forecast_control:
         st.markdown('<div class="toolbar-control">', unsafe_allow_html=True)
@@ -1985,10 +1980,6 @@ def main() -> None:
     with train_header:
         st.markdown('<div class="section-toolbar-copy">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Train va test davri</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="section-note">Default holatda barcha model chiziqlari, tanlanganda esa faqat bitta model ko‘rinadi.</div>',
-            unsafe_allow_html=True,
-        )
         st.markdown("</div>", unsafe_allow_html=True)
     with train_control:
         st.markdown('<div class="toolbar-control">', unsafe_allow_html=True)
